@@ -2,14 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Coop Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0f14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Blast Party</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script type="module" src="js/main.js"></script>
 </head>
 <body>
-  <main>
-    <h1>Coop Game</h1>
+  <main id="menu">
+    <h1>Blast Party</h1>
 
     <section id="home">
       <label for="name">Your name</label>
@@ -34,12 +38,96 @@
       <h2>Players <span id="player-count" class="muted"></span></h2>
       <ul id="players"></ul>
 
+      <label>Your hat</label>
+      <div id="hats" class="hats"></div>
+
+      <div id="host-settings" hidden>
+        <div class="row settings">
+          <label>First to
+            <select id="target-wins"></select>
+          </label>
+          <label>Map
+            <select id="map-choice"></select>
+          </label>
+        </div>
+        <button id="start-btn" class="primary">Start game</button>
+      </div>
+      <p id="wait-host" class="muted">Waiting for the host to start…</p>
+
       <button id="leave-btn" class="danger">Leave game</button>
     </section>
 
     <p id="status" role="status"></p>
+
+    <details class="howto">
+      <summary>How to play</summary>
+      <p>Last one standing wins the round. Between rounds everyone picks an upgrade, and they stack. Dead players come back as ghosts who can annoy the living.</p>
+      <p><b>Phone</b> (landscape): left thumb moves, right thumb aims and fires. Buttons: ability, dash, pickup.</p>
+      <p><b>Laptop</b>: WASD to move, mouse to aim, click to shoot, <kbd>Space</kbd> dash, <kbd>Q</kbd> / right-click ability, <kbd>E</kbd> pickup, <kbd>1</kbd>–<kbd>4</kbd> emotes.</p>
+      <p>Tip: a laptop makes the best host.</p>
+    </details>
   </main>
 
-  <script src="app.js"></script>
+  <section id="game" hidden>
+    <canvas id="canvas"></canvas>
+
+    <div id="hud">
+      <div class="hud-top">
+        <button id="menu-btn" class="hud-btn" aria-label="Leave game">✕</button>
+        <div id="scores"></div>
+        <button id="sound-btn" class="hud-btn" aria-label="Toggle sound">🔇</button>
+      </div>
+      <div id="round-info"></div>
+      <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text"></span></div>
+      <div id="ghost-hint" hidden>👻 You're a ghost: <b>fire</b> to spook, <b>ability</b> to drop a banana</div>
+      <div id="killfeed"></div>
+      <div id="announce"></div>
+      <div id="emotes">
+        <button data-emote="0" aria-label="Laugh">😂</button>
+        <button data-emote="1" aria-label="Angry">😡</button>
+        <button data-emote="2" aria-label="Wave">👋</button>
+        <button data-emote="3" aria-label="Skull">💀</button>
+      </div>
+    </div>
+
+    <div id="controls">
+      <div id="stick-move" class="stick"><div class="knob"></div></div>
+      <div id="stick-aim" class="stick"><div class="knob"></div></div>
+      <div class="actions">
+        <button id="btn-item" class="action empty"><span class="icon"></span><span class="label" id="item-name"></span><kbd>E</kbd></button>
+        <button id="btn-dash" class="action"><span class="icon">💨</span><span class="label">Dash</span><kbd>Space</kbd></button>
+        <button id="btn-ability" class="action big"><span class="icon"></span><span class="label" id="ability-name"></span><kbd>Q</kbd></button>
+      </div>
+    </div>
+
+    <div id="draft" class="overlay" hidden>
+      <div class="panel">
+        <div class="panel-head">
+          <h2 id="draft-title">Pick one</h2>
+          <span id="draft-timer"></span>
+        </div>
+        <div id="draft-cards"></div>
+      </div>
+    </div>
+
+    <div id="results" class="overlay" hidden>
+      <div class="panel">
+        <h2 id="results-winner"></h2>
+        <div id="results-standings"></div>
+        <h3>Awards</h3>
+        <div id="results-awards"></div>
+        <div class="row results-actions">
+          <button id="results-again" class="primary">Play again</button>
+          <span id="results-wait" class="muted">Waiting for the host…</span>
+          <button id="results-leave">Leave</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rotate">
+      <div>📱↻</div>
+      <p>Rotate your phone to landscape</p>
+    </div>
+  </section>
 </body>
 </html>

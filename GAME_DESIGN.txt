@@ -1,0 +1,467 @@
+=====================================================================
+  BLAST PARTY  (working title)
+  Game design document, v0.1, 2026-10-13
+=====================================================================
+
+  A top-down, every-player-for-themselves arena shooter for 2-8
+  friends in the same room. Everyone plays in the browser on their own
+  phone or laptop. Rounds are short and chaotic, and there are lots of
+  silly abilities. The aim is to make people laugh, shout and
+  immediately want "one more round".
+
+
+---------------------------------------------------------------------
+1. DESIGN PILLARS
+---------------------------------------------------------------------
+
+  1. FUNNY BEFORE FAIR
+     Abilities should make the room laugh: slipping on a banana,
+     getting turned into a sheep, swapping places at the worst moment.
+     When a balance choice comes up, pick the funnier option, as long
+     as it doesn't feel cheap.
+
+  2. PICK UP AND PLAY IN 10 SECONDS
+     Open the link, type your name, enter the code, play. No accounts,
+     installs or tutorials. The controls explain themselves.
+
+  3. PHONE IS A FIRST-CLASS CONTROLLER
+     Every feature must work well with two thumbs on a phone. Laptops
+     are supported, but nothing may need a mouse or keyboard.
+
+  4. SHORT ROUNDS, NOBODY WAITS LONG
+     Rounds last 60-90 seconds. Eliminated players keep playing as
+     ghosts, so nobody just sits and watches.
+
+  5. YOU CAN SEE EVERYTHING
+     The whole arena is on screen at once, on every device. With no
+     hidden information, friends can point at the screen and yell
+     "behind you!"
+
+
+---------------------------------------------------------------------
+2. CORE LOOP
+---------------------------------------------------------------------
+
+  LOBBY  ->  ROUND  ->  RESULTS + ABILITY DRAFT  ->  ROUND  -> ... -> WINNER
+
+  - The host creates a game. Friends join with the code (this already
+    works).
+  - The host picks the match length (first to 3 / 5 / 7 round wins)
+    and presses START.
+  - ROUND: everyone spawns at the edges of the arena. The last player
+    alive wins the round. After 45 seconds the arena starts to shrink,
+    so rounds can't drag on.
+  - Between rounds, every player drafts a new upgrade (section 6).
+    Upgrades stack for the rest of the match, so players get stronger
+    and weirder every round.
+  - The first player to reach the target number of round wins wins the
+    match. An awards screen follows (section 10), then "Play again".
+
+
+---------------------------------------------------------------------
+3. CAMERA AND ARENA
+---------------------------------------------------------------------
+
+  - Fixed top-down camera that shows the WHOLE arena, scaled to fit the
+    screen. There is no scrolling and no split screen.
+  - The arena is a 16:9 rectangle (logical size 1600 x 900 units), so
+    it fills a landscape phone screen.
+  - Phones play in LANDSCAPE. In portrait, show a "rotate your phone"
+    screen.
+  - The arena is sized for up to 8 players. Players are about 40 units
+    across, which stays easy to see on a small phone screen.
+  - Each player's own character has a bright outline and a small arrow
+    above it, so you can find yourself instantly.
+
+  Arena contents:
+    - Walls: solid and indestructible. They block bullets and movement.
+    - Crates: break after 3 hits and sometimes drop a pickup.
+    - Hazards: change per map (section 8).
+    - Shrinking zone: a ring that closes in after 45 seconds. Standing
+      outside it deals damage over time.
+
+
+---------------------------------------------------------------------
+4. CONTROLS
+---------------------------------------------------------------------
+
+  PHONE (landscape, touch)
+    Left thumb:   virtual joystick to MOVE (appears wherever you first
+                  touch on the left half of the screen).
+    Right thumb:  virtual joystick to AIM. Holding it pushed out fires
+                  automatically (twin-stick style).
+    Buttons beside the right stick:
+      [DASH]      short burst of speed with a brief moment of
+                  invulnerability.
+      [ABILITY]   your drafted ability. Tap to cast it in the aim
+                  direction, or drag from the button to aim it
+                  precisely.
+      [PICKUP]    the single-use item from the map (greyed out when
+                  empty).
+    Extras: the phone vibrates when you get hit (Android only; iOS
+    browsers don't support it). The game requests fullscreen and keeps
+    the screen awake while you play.
+
+  LAPTOP (keyboard + mouse)
+    WASD / arrow keys   move
+    Mouse               aim
+    Left click (hold)   shoot
+    Space               dash
+    Q or right click    ability
+    E                   pickup item
+
+  GAMEPAD (later): twin sticks, triggers to shoot, face buttons for
+  abilities, using the browser's Gamepad API.
+
+  FAIRNESS BETWEEN PHONE AND MOUSE
+    A mouse aims much more precisely than a thumb. To balance this:
+    - Bullets are large, fairly slow and easy to see, so dodging
+      matters more than pinpoint aim.
+    - Touch aiming gets light aim assist: shots bend slightly toward the
+      nearest enemy inside a narrow cone.
+    - Most abilities are area-based rather than precision-based.
+
+
+---------------------------------------------------------------------
+5. PLAYER BASICS
+---------------------------------------------------------------------
+
+  Health:       100 HP. The basic bullet deals 20 (5 hits to eliminate).
+  Movement:     fairly fast and responsive, with no inertia (except on
+                ice).
+  Basic gun:    fires about 4 shots per second with unlimited ammo.
+  Dash:         about 200 units over 0.15 seconds, with a 2 second
+                cooldown and invulnerability while dashing.
+  Knockback:    every hit pushes the target back a little. This adds
+                comedy and lets you push people into hazards.
+  Elimination:  the player bursts into confetti, a big "KO!" appears,
+                and the kill feed shows a line like
+                "Alex BANANA'D Bob".
+  After death:  you become a GHOST (section 7).
+
+
+---------------------------------------------------------------------
+6. ABILITIES
+---------------------------------------------------------------------
+
+  Each player has three kinds of power:
+
+    A) ONE ACTIVE ABILITY (the [ABILITY] button)
+       Picked in the first draft. It has a cooldown and can be swapped
+       for a different one in later drafts.
+
+    B) PASSIVE UPGRADES (stack all match long)
+       Drafted between rounds. Each one permanently changes your
+       character or gun.
+
+    C) MAP PICKUPS (the [PICKUP] button)
+       Single-use items that spawn in the arena. You can carry one at a
+       time.
+
+  DRAFT RULES
+    - After each round, every player is shown 3 random cards and picks
+      1. Everyone picks at the same time, with a 15 second timer that
+      picks randomly when it runs out.
+    - Catch-up rule: players with the FEWEST round wins are offered 4
+      cards instead of 3. Whoever leads the match gets only 2.
+    - The first draft (before round 1) always offers ACTIVE abilities.
+      After that, cards are mostly passives, with a chance to offer a
+      new active ability.
+
+  --- 6A. ACTIVE ABILITIES (cooldown 6-15 s) ---------------------------
+
+  Movement
+    BLINK         Short teleport in the aim direction.
+    SWAP          Fire a slow orb. Whoever it hits swaps places with you.
+    GRAPPLE       A hook that pulls you to a wall, or pulls a player to
+                  you.
+    BOUNCE PAD    Drop a pad. Anyone who steps on it (you included) is
+                  launched across the arena.
+
+  Damage
+    SHOTGUN       A wide burst of 7 pellets with big knockback.
+    BOOMERANG     Flies out and comes back, hitting on both passes.
+    HOMING ROCKET A slow rocket that follows the nearest enemy and can be
+                  shot down.
+    CHAIN ZAP     Lightning that jumps between up to 4 nearby players.
+    SNOWBALL      Grows bigger and stronger the longer it rolls.
+    BLACK HOLE    Pulls every player and bullet toward one point for
+                  2 seconds.
+
+  Defense
+    BUBBLE        Blocks all damage for 1.5 seconds.
+    MIRROR        Reflects bullets back at the shooter for 1 second.
+    DECOY         Creates a fake copy of you that walks forward. Hitting
+                  it causes a small explosion.
+    VANISH        Invisible for 3 seconds. Footprints still give you
+                  away.
+
+  Chaos (the funny ones)
+    BANANA        Throw a banana peel. Anyone who steps on it slides
+                  helplessly, spinning around.
+    SHEEPIFY      Turns the target into a sheep for 2 seconds: no
+                  shooting, they can only "baa" (the shoot button plays
+                  a sound).
+    BIG HEAD      Gives every enemy a huge head (a bigger hitbox) for
+                  4 seconds.
+    SHRINK RAY    The target becomes tiny, fast and weak for 4 seconds.
+    REVERSE       The target's movement controls are reversed for
+                  3 seconds.
+    HOT POTATO    Sticks a bomb to the target. Touching another player
+                  passes it on. It explodes after 5 seconds.
+    DISCO BALL    Everyone nearby is forced to dance (spin in place) for
+                  1.5 seconds.
+    FART CLOUD    A green cloud that does damage over time and pushes
+                  people away. Plays a sound, of course.
+
+  --- 6B. PASSIVE UPGRADES (stack all match) ---------------------------
+
+    BOUNCY BULLETS     Bullets bounce off walls once (stacks: more
+                       bounces).
+    SPLIT SHOT         +1 bullet per shot, fired in a spread.
+    BIG BULLETS        Bullets are 50% larger and deal +5 damage.
+    FAST FEET          +15% movement speed.
+    QUICK TRIGGER      +20% fire rate.
+    VAMPIRE            Heal 5 HP every time you hit someone.
+    THICK SKIN         +30 maximum HP (your character looks chunkier).
+    DASH MASTER        Dash cooldown cut in half. Dashing leaves a fire
+                       trail.
+    LAST LAUGH         Explode when you die, damaging anyone nearby.
+    PIERCING           Bullets pass through the first player they hit.
+    MAGNET             Pickups fly toward you. Bullets bend slightly
+                       toward enemies.
+    COOLDOWN CLOCK     Ability cooldown -25%.
+    TINY               You are 25% smaller and harder to hit, with
+                       -10 maximum HP.
+    RICOCHET RAGE      Each bullet that hits a wall speeds up and deals
+                       +5 damage.
+
+  --- 6C. MAP PICKUPS (single use, spawn every ~10 s) ------------------
+
+    MEDKIT        Restore 40 HP.
+    MINIGUN       5 seconds of very fast fire.
+    LANDMINE      Place an invisible mine.
+    SPEED BOOTS   Double speed for 4 seconds.
+    GIANT MODE    Grow huge for 4 seconds: push others around and take
+                  half damage.
+    CONFUSION     Every OTHER player's screen is flipped upside down for
+                  3 seconds. (This is where the shouting comes from.)
+    TELEPORT ALL  Every player is moved to a random spot.
+    RANDOM        Gives a random active ability as a one-shot.
+
+  Pickups appear in glowing boxes. You can't see what's inside until
+  you grab it.
+
+
+---------------------------------------------------------------------
+7. GHOSTS (nobody sits out)
+---------------------------------------------------------------------
+
+  Eliminated players keep playing as ghosts until the round ends.
+    - Ghosts float through walls and can't be hurt.
+    - Ghosts can't do damage, but they can be annoying:
+        * Every 8 seconds a ghost can drop a banana peel or spook a
+          living player (a short push).
+        * Ghosts can pick up and throw crates.
+    - Ghosts are see-through, so they never block the view.
+    - Ghosts can never decide a round on their own. They annoy, and the
+      living still have to finish each other off.
+
+  This gives plenty of revenge comedy and keeps eliminated friends
+  watching the screen.
+
+
+---------------------------------------------------------------------
+8. MAPS
+---------------------------------------------------------------------
+
+  Each round uses a random map. The host can lock one map in the lobby.
+
+    BACKYARD    The basic map: a few walls and lots of crates. Good for
+                learning.
+    ICE RINK    Slippery floor (movement has inertia). Bananas become
+                deadly.
+    LAVA LAB    Lava pools that burn. With knockback, pushing people
+                in is very satisfying.
+    CONVEYOR    Conveyor belts drag everyone sideways. Some belts
+                switch direction.
+    PINBALL     Bumpers bounce players and bullets around.
+    DARK HOUSE  The light shrinks to a circle around each player.
+                Muzzle flashes reveal positions. (Breaks pillar 5 on
+                purpose, as a special map.)
+
+
+---------------------------------------------------------------------
+9. SCORING AND CATCH-UP
+---------------------------------------------------------------------
+
+  - The last player alive wins the round (+1 point). If the last
+    players die at the same moment, the round is a draw and no point is
+    awarded.
+  - First to 3 / 5 / 7 points wins the match (the host chooses).
+  - CROWN: the current match leader wears a crown. Eliminating the
+    crown holder heals you 30 HP. This puts a target on the leader's
+    back, and that's the point.
+  - Players who are behind get more draft cards (section 6).
+  - REVENGE: whoever eliminated you is marked on your screen next
+    round. Killing them shows a big "REVENGE!" banner.
+
+
+---------------------------------------------------------------------
+10. PARTY FEATURES (playing in the same room)
+---------------------------------------------------------------------
+
+  - Big, readable announcements that friends see on each other's
+    screens: "KO!", "DOUBLE KO!", "REVENGE!", "LAST ONE STANDING!".
+  - A funny kill feed with a verb for each ability:
+    "zapped", "bananaed", "sheeped", "yeeted into lava", "potatoed".
+  - Emote wheel in the lobby, between rounds and as a ghost: a few
+    big emoji bubbles above your character.
+  - Every player chooses a colour and a hat in the lobby (crown,
+    propeller cap, chef hat, traffic cone...).
+  - End-of-match awards, so everyone gets a moment:
+      Champion            the most round wins
+      Banana King         the most enemies slipped
+      Kamikaze            the most self-eliminations
+      Ghost of the Match  the most ghost annoyances
+      Pacifist            the least damage dealt
+      Unlucky             took the most damage
+  - Strong game feel: screen shake, hit flashes, knockback, short
+    slow motion on the final kill of a round.
+
+
+---------------------------------------------------------------------
+11. VISUAL AND AUDIO STYLE
+---------------------------------------------------------------------
+
+  Visuals
+    - Simple flat shapes drawn on an HTML canvas: round blob characters
+      with eyes, bright saturated player colours and a dark,
+      low-contrast floor so bullets stand out.
+    - Bullets take the shooter's colour, so you can tell who is
+      shooting at you.
+    - No image files are needed for the MVP. Everything is drawn in
+      code, so it stays light and loads quickly on phones.
+
+  Audio
+    - Short synthesized sound effects (pew, boing, baa, fart, splat)
+      generated in the browser with the Web Audio API, so no audio
+      files are needed.
+    - Phones only allow sound after a tap. The "Join" or "Start" button
+      unlocks audio.
+    - Mute button in the corner. Sound is on by default on laptops,
+      which become the "room speakers".
+
+
+---------------------------------------------------------------------
+12. TECHNICAL DESIGN
+---------------------------------------------------------------------
+
+  Platform
+    - Static site on GitHub Pages with plain JavaScript, Canvas 2D and
+      no build step.
+    - Builds on the existing lobby, which uses PeerJS / WebRTC
+      peer-to-peer connections.
+    - Maximum of 8 players, matching the lobby.
+
+  The host runs the game (host-authoritative)
+    - The HOST device runs the real simulation: movement, bullets,
+      hits, abilities and rounds.
+    - Each player device only:
+        1. sends its input to the host about 30 times per second
+           (move direction, aim direction, buttons pressed, sequence
+           number), and
+        2. draws the world state the host sends back.
+    - The host sends world snapshots about 20 times per second
+      (positions, HP, bullets, effects).
+    - Player devices draw the world about 100 ms in the past and
+      smoothly interpolate between two snapshots, so movement looks
+      smooth even with an uneven connection.
+    - Your own character is predicted locally (it moves the moment you
+      press) and corrected to match the host. This can be added after
+      the MVP if the game feels sluggish.
+    - Because everyone is in the same room on the same Wi-Fi, latency
+      should be very low. That's an advantage of this game idea.
+
+  Recommendation: the host should be a LAPTOP when possible. Running
+  the full simulation for 8 players is easy for a laptop, but it uses
+  more battery and processing on a phone. Phones can still host smaller
+  games.
+
+  Data sizes
+    - A snapshot is roughly 8 players x ~30 bytes + bullets + effects,
+      under 2 KB as compact arrays. This is no problem on local Wi-Fi.
+    - Use short keys / arrays instead of verbose JSON objects.
+
+  Disconnects
+    - A player who disconnects mid-round is eliminated, and their score
+      is kept in case they rejoin with the same name.
+    - If the host leaves, the match ends (same as the current lobby).
+      Host migration is out of scope.
+
+  Proposed file structure
+    index.html     screens: home, lobby, game, draft, results
+    style.css
+    net.js         PeerJS connection layer (extracted from app.js)
+    lobby.js       lobby UI (the current app.js logic)
+    game/
+      sim.js       host-only simulation: physics, combat, rounds
+      abilities.js data table + behaviour for every ability
+      maps.js      arena layouts
+      render.js    canvas drawing, effects, interpolation
+      input.js     touch joysticks, keyboard/mouse, gamepad
+      audio.js     Web Audio sound effects
+      ui.js        HUD, draft cards, announcements, awards
+
+  Design abilities as DATA: each ability is one entry in a table
+  (name, cooldown, icon, a cast function, a kill-feed verb). This makes
+  adding new abilities quick and cheap.
+
+
+---------------------------------------------------------------------
+13. BUILD PLAN (MILESTONES)
+---------------------------------------------------------------------
+
+  M1  "IT MOVES"
+      Host START button. Arena with walls. Players move with
+      touch / keyboard. Positions sync to every device.
+      Done when two phones and a laptop can see each other running
+      around smoothly.
+
+  M2  "IT SHOOTS"
+      Basic gun, HP, knockback, dash, elimination, last-one-standing
+      round win, scoreboard, next round.
+      Done when you can play a real match, first to 5.
+
+  M3  "IT'S FUNNY"
+      The ability draft with the first 8 actives (BANANA, SHEEPIFY,
+      BLINK, SHOTGUN, BOOMERANG, BUBBLE, HOT POTATO, BLACK HOLE) and
+      6 passives. Kill feed and announcements. Sound effects.
+
+  M4  "NOBODY WAITS"
+      Ghosts, map pickups, the shrinking zone, the crown and catch-up
+      rules.
+
+  M5  "MORE MORE MORE"
+      The rest of the abilities and maps, hats/colours, emotes, awards,
+      gamepad support.
+
+  M6  POLISH
+      Screen shake and slow motion, balance pass, performance tuning on
+      older phones, local prediction if needed.
+
+
+---------------------------------------------------------------------
+14. OPEN QUESTIONS
+---------------------------------------------------------------------
+
+  - Final game name?
+  - Should rounds also give points for eliminations, not just for
+    surviving?
+  - Team modes later (2v2, everyone vs the crown holder)?
+  - Should a phone be able to join as a spectator only (for example, a
+    TV / laptop showing the arena with no player)?
+  - Should the host's screen double as a big "TV view" when the laptop
+    is connected to a television?
+
+=====================================================================
