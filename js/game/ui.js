@@ -27,6 +27,8 @@ export class GameUI {
     this.$('#sound-btn').addEventListener('click', () => this.h.onSoundToggle(), opts);
     this.$('#results-again').addEventListener('click', () => this.h.onPlayAgain(), opts);
     this.$('#results-leave').addEventListener('click', () => this.h.onLeave(true), opts);
+    this.$('#results-lobby').addEventListener('click', () => this.h.onLobby(), opts);
+    this.$('#notice').hidden = true;
     this.$('#killfeed').replaceChildren();
     this.$('#draft').hidden = true;
     this.$('#results').hidden = true;
@@ -47,7 +49,7 @@ export class GameUI {
     const { me, phase } = view;
 
     // Scoreboard
-    const scoreKey = view.players.map((p) => `${p.num}:${p.score}:${p.crown}:${p.alive}:${p.picked}`).join('|') + phase;
+    const scoreKey = view.players.map((p) => `${p.num}:${p.score}:${p.crown}:${p.alive}:${p.picked}:${p.away}`).join('|') + phase;
     this.set('scores', scoreKey, () => {
       const box = this.$('#scores');
       box.replaceChildren(...view.players.map((p) => {
@@ -57,6 +59,7 @@ export class GameUI {
         dot.style.background = info?.color || '#888';
         chip.append(dot, el('span', 'name', info?.name || '?'), el('b', '', String(p.score)));
         if (p.crown) chip.append(el('span', '', '👑'));
+        if (p.away) chip.append(el('span', '', '📡'));
         if (phase === 'draft' && p.picked) chip.append(el('span', '', '✓'));
         return chip;
       }));
@@ -115,6 +118,8 @@ export class GameUI {
     });
     if (phase === 'draft') this.updateDraft(view);
     if (phase === 'matchEnd' && this.results) this.$('#results').hidden = false;
+    // Playing again alone makes no sense; the lobby is the way forward then.
+    this.set('canAgain', this.h.isHost && view.players.length >= 2, (v) => { this.$('#results-again').hidden = !v; });
   }
 
   // ------------------------------------------------------------ draft
@@ -172,6 +177,8 @@ export class GameUI {
     this.results = results;
     const name = (num) => view.roster.get(num)?.name || '?';
     this.$('#results-winner').textContent = `🏆 ${name(results.winner)} wins!`;
+    this.$('#results-reason').textContent = results.reason || '';
+    this.$('#results-reason').hidden = !results.reason;
     this.$('#results-standings').replaceChildren(...results.standings.map((s, i) => {
       const row = el('div', 'standing');
       row.append(el('span', '', `${i + 1}.`), el('span', 'grow', name(s.num)), el('b', '', String(s.score)));
@@ -185,9 +192,17 @@ export class GameUI {
       row.append(text);
       return row;
     }));
-    this.$('#results-again').hidden = !this.h.isHost;
+    this.cache.canAgain = undefined;
+    this.$('#results-lobby').hidden = !this.h.isHost;
     this.$('#results-wait').hidden = this.h.isHost;
     this.$('#results').hidden = false;
+  }
+
+  setNotice(text) {
+    this.set('notice', text, (v) => {
+      this.$('#notice').textContent = v;
+      this.$('#notice').hidden = !v;
+    });
   }
 
   clearResults() {

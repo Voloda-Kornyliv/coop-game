@@ -13,7 +13,7 @@
 </head>
 <body>
   <main id="menu">
-    <h1>Blast Party</h1>
+    <h1>Blast Party v0.1</h1>
 
     <section id="home">
       <label for="name">Your name</label>
@@ -79,6 +79,7 @@
       </div>
       <div id="round-info"></div>
       <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text"></span></div>
+      <div id="notice" hidden></div>
       <div id="ghost-hint" hidden>👻 You're a ghost: <b>fire</b> to spook, <b>ability</b> to drop a banana</div>
       <div id="killfeed"></div>
       <div id="announce"></div>
@@ -113,12 +114,14 @@
     <div id="results" class="overlay" hidden>
       <div class="panel">
         <h2 id="results-winner"></h2>
+        <p id="results-reason" class="results-reason" hidden></p>
         <div id="results-standings"></div>
         <h3>Awards</h3>
         <div id="results-awards"></div>
         <div class="row results-actions">
           <button id="results-again" class="primary">Play again</button>
           <span id="results-wait" class="muted">Waiting for the host…</span>
+          <button id="results-lobby">Back to lobby</button>
           <button id="results-leave">Leave</button>
         </div>
       </div>

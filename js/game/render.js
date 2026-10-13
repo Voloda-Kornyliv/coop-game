@@ -356,7 +356,7 @@ export class Renderer {
     const info = infoOverride || view.roster.get(p.num);
     if (!info) return;
     const isMe = p.num === view.myNum && !p.decoy;
-    let alpha = 1;
+    let alpha = p.away ? 0.5 : 1;
     if (p.invis) {
       alpha = isMe ? 0.35 : 0.04;
       if (!isMe) this.footprints(p);
@@ -438,6 +438,7 @@ export class Renderer {
     const hat = p.crown ? '👑' : info.hat;
     if (hat && !p.sheep) { this.drawEmoji(hat, p.x, top - 8, 24); top -= 22; }
     const icons = [];
+    if (p.away) icons.push('📡');
     if (p.potato) icons.push('🥔');
     if (p.reverse) icons.push('🌀');
     if (p.confused) icons.push('🙃');

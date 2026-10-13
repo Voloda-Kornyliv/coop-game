@@ -45,6 +45,7 @@ export class Simulation {
     this.crates = [];
     this.pickupTimer = 0;
     this.results = null;
+    this.matchStartCount = 0;
     this.events = [];                  // broadcast in the next snapshot
     this.outbox = [];                  // { to: peerId | '*', msg }
     this.rosterDirty = true;
@@ -72,6 +73,7 @@ export class Simulation {
       counts: null,
       offer: null,
       picked: true,
+      away: false,
       emote: -1,
       emoteT: 0,
       ...(saved || {}),
@@ -95,6 +97,36 @@ export class Simulation {
     this.players.delete(id);
     this.rosterDirty = true;
     this.checkRoundEnd();
+  }
+
+  // A player whose connection dropped keeps their slot while they reconnect.
+  // Their character freezes and the round pauses (see `paused`).
+  setAway(id, away) {
+    const p = this.players.get(id);
+    if (!p || p.away === away) return;
+    p.away = away;
+    p.awayTime = 0;
+    p.input = { mx: 0, my: 0, ax: Math.cos(p.aim), ay: Math.sin(p.aim), fire: false, touch: p.input.touch };
+    p.counts = null;                   // a reloaded client restarts its counters
+    p.pending = null;
+    this.event(away ? 'away' : 'back', p.num);
+  }
+
+  // Re-send everything a (re)connecting client needs beyond snapshots.
+  resync(id) {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.rosterDirty = true;
+    if (this.phase === 'draft' && p.offer && !p.picked) this.outbox.push({ to: id, msg: { type: 'offer', cards: p.offer } });
+    if (this.results) this.outbox.push({ to: id, msg: this.results });
+  }
+
+  // Pause while someone reconnects, but never for longer than maxPause: after
+  // that the round goes on with their character frozen (slot still reserved).
+  get paused() {
+    if (this.phase !== 'countdown' && this.phase !== 'playing' && this.phase !== 'roundEnd') return false;
+    for (const p of this.players.values()) if (p.away && p.awayTime < ROUND.maxPause) return true;
+    return false;
   }
 
   resetForRound(p, spawn) {
@@ -151,6 +183,7 @@ export class Simulation {
     }
     this.round = 0;
     this.results = null;
+    this.matchStartCount = this.players.size;
     this.rosterDirty = true;
     this.startDraft();
   }
@@ -250,7 +283,7 @@ export class Simulation {
     else this.startDraft();
   }
 
-  endMatch(winner) {
+  endMatch(winner, reason = '') {
     const all = [...this.players.values()];
     const best = (fn, minValue = 1) => {
       let top = null, topV = -Infinity;
@@ -270,6 +303,7 @@ export class Simulation {
     this.results = {
       type: 'results',
       winner: winner.num,
+      reason,
       standings: all.sort((a, b) => b.score - a.score).map((p) => ({ num: p.num, score: p.score })),
       awards,
     };
@@ -281,6 +315,23 @@ export class Simulation {
 
   step() {
     this.tick++;
+    for (const p of this.players.values()) if (p.away) p.awayTime += TICK_DT;
+
+    // Everyone else left for good: end the match instead of playing alone.
+    if (this.matchStartCount > 1 && this.players.size < 2 && this.phase !== 'matchEnd' && this.phase !== 'lobby') {
+      const last = [...this.players.values()][0];
+      if (last) { this.endMatch(last, 'Everyone else left'); return; }
+    }
+
+    if (this.paused) {
+      for (const p of this.players.values()) {
+        const presses = this.takePresses(p);
+        if (presses.emote) { p.emote = p.emoteIdx; p.emoteT = 2; this.event('emote', p.num, p.emoteIdx); }
+        p.emoteT = Math.max(0, p.emoteT - TICK_DT);
+      }
+      return;
+    }
+
     this.phaseTime += TICK_DT;
     let dt = TICK_DT;
     if (this.slowmo > 0) {

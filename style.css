@@ -229,6 +229,23 @@ body.in-game #menu { display: none; }
   text-align: center;
 }
 
+#notice {
+  position: absolute;
+  top: 24%;
+  left: 0; right: 0;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 90%;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: rgba(13, 15, 20, 0.88);
+  border: 1px solid #3a4152;
+  font-weight: 700;
+  text-align: center;
+  z-index: 5;
+}
+.results-reason { margin: -4px 0 10px; color: var(--hud-muted); }
+
 #killfeed {
   position: absolute;
   right: max(8px, env(safe-area-inset-right));

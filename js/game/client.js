@@ -19,7 +19,7 @@ function vibrate(ms) {
 }
 
 export class GameClient {
-  constructor({ root, myId, isHost, send, onLeave, onPlayAgain }) {
+  constructor({ root, myId, isHost, send, onLeave, onPlayAgain, onLobby }) {
     this.root = root;
     this.myId = myId;
     this.send = send;
@@ -32,6 +32,7 @@ export class GameClient {
     this.lastCount = 0;
     this.recentKOs = [];
     this.wentFullscreen = false;
+    this.connNotice = '';
     this.aborter = new AbortController();
 
     root.hidden = false;
@@ -42,6 +43,7 @@ export class GameClient {
       onPick: (card) => this.send({ type: 'pick', card }),
       onLeave: (confirmed) => { if (confirmed || window.confirm('Leave the game?')) onLeave(); },
       onPlayAgain,
+      onLobby,
       onSoundToggle: () => this.setSound(!audio.enabled),
     });
 
@@ -106,6 +108,7 @@ export class GameClient {
       this.processEvents();
       this.phaseTransitions();
       this.ui.update(this.view);
+      this.ui.setNotice(this.connNotice || this.pauseNotice());
       if (this.pendingResults) {
         this.ui.showResults(this.pendingResults, this.view);
         this.pendingResults = null;
@@ -130,6 +133,19 @@ export class GameClient {
       this.renderTick += (target - this.renderTick) * Math.min(1, dt * 3);
     }
     this.renderTick = Math.min(this.renderTick, latest.tick);
+  }
+
+  setConnectionNotice(text) {
+    this.connNotice = text;
+    if (!this.view) this.ui.setNotice(text);
+  }
+
+  // Read from the newest snapshot (not the delayed view) so the banner is current.
+  pauseNotice() {
+    const latest = this.snaps[this.snaps.length - 1];
+    if (!latest?.paused || !latest.waitingFor.length) return '';
+    const names = latest.waitingFor.map((num) => this.roster.get(num)?.name || '?');
+    return `⏸ Waiting for ${names.join(', ')} to reconnect…`;
   }
 
   buildView() {
@@ -173,6 +189,7 @@ export class GameClient {
       tick: this.renderTick,
       phase: b.phase,
       phaseLeft: b.phaseLeft,
+      paused: b.paused,
       round: b.round,
       map: b.map,
       roundTime: lerp(a.roundTime, b.roundTime, t),
@@ -404,6 +421,12 @@ export class GameClient {
         R.ring(a[1], a[2], 110, 'rgba(220,230,255,0.8)', 0.4);
         R.emoji(a[1], a[2] - 30, '👻', 34, 0.8);
         audio.play('spook');
+        break;
+      case 'away':
+        this.ui.feed([this.name(a[0]), ' lost connection 📡']);
+        break;
+      case 'back':
+        this.ui.feed([this.name(a[0]), ' is back!']);
         break;
       case 'teleportAll':
         this.ui.announce('🌪️ Everyone teleported!');

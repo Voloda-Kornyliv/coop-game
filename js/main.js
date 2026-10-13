@@ -59,7 +59,7 @@ function renderPlayers(players) {
     name.textContent = `${p.hat ? `${p.hat} ` : ''}${p.name}`;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = [p.isHost && 'host', p.id === session?.id && 'you'].filter(Boolean).join(' · ');
+    tag.textContent = [p.isHost && 'host', p.id === session?.id && 'you', p.away && '📡 reconnecting…'].filter(Boolean).join(' · ');
     li.append(name, tag);
     return li;
   }));
@@ -114,6 +114,9 @@ function createGame(name) {
     .on('error', (msg) => fail(msg))
     .on('join', (p) => hostGame?.playerJoined(p))
     .on('leave', (id) => hostGame?.playerLeft(id))
+    .on('away', (id) => hostGame?.playerAway(id))
+    .on('back', (id) => hostGame?.playerBack(id))
+    .on('reconnect', (p) => hostGame?.playerReconnected(p))
     .on('message', (id, msg) => hostGame?.onMessage(id, msg));
   session.open();
 }
@@ -127,8 +130,18 @@ function joinGame(name, code) {
     .on('open', (c) => showLobby(c))
     .on('players', renderPlayers)
     .on('closed', (reason) => fail(reason))
+    .on('reconnecting', () => {
+      client?.setConnectionNotice('📡 Connection lost. Reconnecting…');
+      setStatus('Connection lost. Reconnecting…', true);
+    })
+    .on('reconnected', () => {
+      if (client) client.myId = session.id;   // only changes if our slot expired
+      client?.setConnectionNotice('');
+      setStatus('Reconnected.');
+    })
     .on('message', (msg) => {
       if (msg.type === 'game-start') startClient();
+      else if (msg.type === 'lobby') returnToLobby();
       else client?.handle(msg);
     });
   session.open();
@@ -144,6 +157,7 @@ function startClient() {
     send: isHost ? (msg) => hostGame.onMessage(session.id, msg) : (msg) => session.send(msg),
     onLeave: () => leave('You left the game.'),
     onPlayAgain: () => hostGame?.restart(),
+    onLobby: () => hostBackToLobby(),
   });
 }
 
@@ -153,9 +167,28 @@ function startHostGame() {
     session,
     settings: { targetWins: Number($('target-wins').value), mapId: $('map-choice').value },
   });
+  session.inGame = true;
   session.broadcast({ type: 'game-start' });
   startClient();
   hostGame.start(client);
+}
+
+// Host: end the match and take everyone back to the lobby (session stays open).
+function hostBackToLobby() {
+  if (!isHost) return;
+  session.broadcast({ type: 'lobby' });
+  returnToLobby();
+}
+
+function returnToLobby() {
+  client?.destroy();
+  client = null;
+  hostGame?.stop();
+  hostGame = null;
+  if (isHost) session.inGame = false;
+  document.body.classList.remove('in-game');
+  showLobby(session.code);
+  renderPlayers(session.players);
 }
 
 function teardown() {
@@ -216,7 +249,14 @@ $('copy-btn').addEventListener('click', async () => {
   }
 });
 
-window.addEventListener('beforeunload', () => session?.close());
+// Closing/reloading the tab is treated as a dropped connection (not a leave),
+// so a guest can come back as the same player. Only the host ends the game.
+window.addEventListener('beforeunload', () => { if (isHost) session?.close(); });
+
+// Test/debug hook: open with ?debug to inspect state from the console.
+if (new URLSearchParams(location.search).has('debug')) {
+  window.coopDebug = { session: () => session, client: () => client, hostGame: () => hostGame };
+}
 
 fillSettings();
 $('name').value = store.get('coopgame-name') || '';

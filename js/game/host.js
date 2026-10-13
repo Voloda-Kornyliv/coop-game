@@ -17,7 +17,10 @@ export class HostGame {
 
   start(localClient) {
     this.local = localClient;
-    for (const p of this.session.players) this.sim.addPlayer(p);
+    for (const p of this.session.players) {
+      this.sim.addPlayer(p);
+      if (p.away) this.sim.setAway(p.id, true);
+    }
     this.sim.startMatch();
     this.last = performance.now();
     this.acc = 0;
@@ -69,6 +72,22 @@ export class HostGame {
 
   playerLeft(id) {
     this.sim.removePlayer(id);
+  }
+
+  // Connection dropped: keep the slot, freeze the player, pause the round.
+  playerAway(id) {
+    this.sim.setAway(id, true);
+  }
+
+  playerBack(id) {
+    this.sim.setAway(id, false);
+  }
+
+  // Same player on a new connection (network blip or page reload).
+  playerReconnected(player) {
+    this.session.send(player.id, { type: 'game-start' });
+    this.sim.setAway(player.id, false);
+    this.sim.resync(player.id);
   }
 
   restart() {

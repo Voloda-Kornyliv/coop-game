@@ -44,6 +44,7 @@ export const ROUND = {
   crownHeal: 30,
   slowmoTime: 1.2,
   slowmoScale: 0.3,
+  maxPause: 20,                             // seconds a dropped player can pause the round
 };
 
 export const TARGET_WINS_OPTIONS = [3, 5, 7];

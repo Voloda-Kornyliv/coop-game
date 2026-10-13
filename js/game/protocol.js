@@ -11,7 +11,7 @@ export const PHASES = ['lobby', 'countdown', 'playing', 'roundEnd', 'draft', 'ma
 const FLAGS = [
   'alive', 'ghost', 'bubble', 'mirror', 'sheep', 'invis', 'dance', 'slip', 'bighead',
   'reverse', 'confused', 'crown', 'dash', 'speed', 'minigun', 'picked', 'giant', 'shrink',
-  'ghostReady', 'emoting',
+  'ghostReady', 'emoting', 'away',
 ];
 
 const r1 = (v) => Math.round(v);
@@ -33,7 +33,7 @@ function playerFlags(sim, p, crownNum) {
     invis: e.invis > 0, dance: e.dance > 0, slip: e.slip > 0, bighead: e.bighead > 0,
     reverse: e.reverse > 0, confused: e.confused > 0, crown: p.num === crownNum, dash: e.dash > 0,
     speed: e.speed > 0, minigun: e.minigun > 0, picked: p.picked, giant: e.giant > 0,
-    shrink: e.shrink > 0, ghostReady: p.ghost && p.ghostCd <= 0, emoting: p.emoteT > 0,
+    shrink: e.shrink > 0, ghostReady: p.ghost && p.ghostCd <= 0, emoting: p.emoteT > 0, away: p.away,
   };
   let bits = 0;
   FLAGS.forEach((f, i) => { if (on[f]) bits |= 1 << i; });
@@ -70,6 +70,8 @@ export function encodeSnapshot(sim, events) {
     m: MAPS.indexOf(sim.map),
     rt: r10(sim.roundTime),
     z: r1(sim.zoneRadius()),
+    pa: sim.paused ? 1 : 0,
+    aw: [...sim.players.values()].filter((p) => p.away && sim.paused).map((p) => p.num),
     p: players,
     b: sim.bullets.map((b) => [b.id, r1(b.x), r1(b.y), PROJECTILE_IDS.indexOf(b.kind), b.ownerNum, r1(b.r)]),
     o: sim.props.map((o) => [o.id, PROP_IDS.indexOf(o.kind), r1(o.x), r1(o.y), r1(o.r), o.ownerNum, Math.round(o.angle * 100), r10(o.life - o.age)]),
@@ -106,6 +108,8 @@ export function decodeSnapshot(s) {
     map: MAPS[s.m] || MAPS[0],
     roundTime: s.rt / 10,
     zone: s.z,
+    paused: !!s.pa,
+    waitingFor: s.aw || [],
     players,
     bullets: byId(s.b, (a) => ({ id: a[0], x: a[1], y: a[2], kind: PROJECTILE_IDS[a[3]], owner: a[4], r: a[5] })),
     props: byId(s.o, (a) => ({ id: a[0], kind: PROP_IDS[a[1]], x: a[2], y: a[3], r: a[4], owner: a[5], angle: a[6] / 100, left: a[7] / 10 })),
