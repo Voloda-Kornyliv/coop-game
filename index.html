@@ -9,11 +9,10 @@
   <title>Blast Party</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script type="module" src="js/main.js"></script>
 </head>
 <body>
   <main id="menu">
-    <h1>Blast Party v0.2</h1>
+    <h1>Blast Party v0.3</h1>
 
     <section id="home">
       <label for="name">Your name</label>
@@ -139,5 +138,32 @@
       <p>Rotate your phone to landscape</p>
     </div>
   </section>
+
+  <!--
+    Loader: the version in the <h1> above is the ONLY place it's written.
+    Every module is loaded with it attached (?v0.3), so after a deploy no
+    browser keeps running old cached code. Add new js files to MODULES.
+  -->
+  <script>
+    (() => {
+      const MODULES = [
+        'net.js', 'game/config.js', 'game/geometry.js', 'game/maps.js', 'game/abilities.js',
+        'game/objects.js', 'game/progression.js', 'game/sim.js', 'game/protocol.js', 'game/host.js',
+        'game/client.js', 'game/render.js', 'game/input.js', 'game/ui.js', 'game/audio.js',
+      ];
+      const version = (document.querySelector('h1').textContent.match(/v\d+(\.\d+)*/) || ['dev'])[0];
+      window.GAME_VERSION = version;
+      const imports = {};
+      for (const m of MODULES) imports[`./js/${m}`] = `./js/${m}?${version}`;
+      const map = document.createElement('script');
+      map.type = 'importmap';
+      map.textContent = JSON.stringify({ imports });
+      document.body.append(map);
+      const main = document.createElement('script');
+      main.type = 'module';
+      main.src = `js/main.js?${version}`;
+      document.body.append(main);
+    })();
+  </script>
 </body>
 </html>

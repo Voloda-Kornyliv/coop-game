@@ -11,7 +11,7 @@
 
 /* global Peer */
 
-import { MAX_PLAYERS } from './game/config.js';
+import { MAX_PLAYERS, VERSION } from './game/config.js';
 
 const ID_PREFIX = 'coopgame-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';  // no 0/O/1/I confusion
@@ -187,6 +187,13 @@ export class HostSession extends Emitter {
   }
 
   onJoin(conn, msg) {
+    // Different builds can't play together (snapshot formats change).
+    if (msg.version !== VERSION) {
+      const theirs = typeof msg.version === 'string' ? msg.version.slice(0, 12) : 'an older version';
+      conn.send(JSON.stringify({ type: 'rejected', reason: `Version mismatch: host has ${VERSION}, you have ${theirs}. Reload the page.` }));
+      setTimeout(() => conn.close(), 500);
+      return;
+    }
     const token = typeof msg.token === 'string' ? msg.token.slice(0, 64) : '';
 
     // Same token = the same player coming back: rebind their slot.
@@ -196,7 +203,7 @@ export class HostSession extends Emitter {
       g.conn = conn;
       g.lastSeen = Date.now();
       this.connToPlayer.set(conn.peer, id);
-      conn.send(JSON.stringify({ type: 'welcome', code: this.code, playerId: id }));
+      conn.send(JSON.stringify({ type: 'welcome', code: this.code, playerId: id, version: VERSION }));
       const player = this.players.find((p) => p.id === id);
       if (g.away) this.markBack(id);
       else this.broadcastPlayers();
@@ -213,7 +220,7 @@ export class HostSession extends Emitter {
     this.guests.set(player.id, { conn, lastSeen: Date.now(), token, away: false, awaySince: 0 });
     this.connToPlayer.set(conn.peer, player.id);
     this.players.push(player);
-    conn.send(JSON.stringify({ type: 'welcome', code: this.code, playerId: player.id }));
+    conn.send(JSON.stringify({ type: 'welcome', code: this.code, playerId: player.id, version: VERSION }));
     this.broadcastPlayers();
     this.emit('join', player);
   }
@@ -352,7 +359,7 @@ export class GuestSession extends Emitter {
       const conn = peer.connect(ID_PREFIX + this.code, { reliable: true, serialization: 'raw' });
       this.conn = conn;
       conn.on('open', () => {
-        if (current()) this.send({ type: 'join', name: this.name, hat: this.hat, token: this.token });
+        if (current()) this.send({ type: 'join', name: this.name, hat: this.hat, token: this.token, version: VERSION });
       });
       conn.on('data', (data) => { if (current()) this.onData(parse(data)); });
       conn.on('close', () => { if (current()) this.connectionLost('Lost connection to the host.'); });
@@ -377,6 +384,10 @@ export class GuestSession extends Emitter {
     switch (msg.type) {
       case 'welcome': {
         clearTimeout(this.attemptTimer);
+        if (msg.version !== VERSION) {
+          this.fail(`Version mismatch: host has ${msg.version || 'an older version'}, you have ${VERSION}. Reload the page on the host's device.`);
+          return;
+        }
         if (typeof msg.playerId === 'string') this.id = msg.playerId;
         clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => this.tickHeartbeat(), HEARTBEAT_MS);

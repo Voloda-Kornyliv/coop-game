@@ -18,6 +18,8 @@ If the user says "only change the design file", change nothing else.
 
 Every commit must increase the version in the home screen title in `index.html` (`<h1>Blast Party v0.N</h1>`) by one: v0.2, v0.3, v0.4, and so on. This lets players check that their device loaded the latest deploy.
 
+That title is the only place the version is written. The loader script at the bottom of `index.html` reads it, loads every module with `?v0.N` attached (cache-busting), and exposes it as `VERSION` for the join handshake. **When you add a new `.js` file, add it to `MODULES` in that loader.**
+
 ## Architecture rules (see GAME_DESIGN.txt section 15)
 
 - **The host runs the game.** `js/game/sim.js` runs only on the host, never touches the DOM or the network, and checks every input it receives. Clients only send input and draw snapshots.

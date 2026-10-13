@@ -658,6 +658,16 @@
       <h1>Blast Party v0.2</h1>.
     - EVERY COMMIT increases it by one (v0.2 -> v0.3 -> v0.4 ...), so
       everyone can check they have the latest build after a deploy.
+    - The title is the ONLY place the version is written. A small
+      script in index.html reads it and loads every code file with the
+      version attached (js/main.js?v0.3, ...), so after a deploy no
+      browser keeps running old cached code. GitHub Pages lets
+      browsers cache files for 10 minutes, and phones can mix old and
+      new files without this.
+    - VERSION CHECK: when joining, the guest sends its version and the
+      host its own. If they differ, joining stops with a clear message
+      ("Version mismatch: host has v0.3, you have v0.2. Reload the
+      page.") instead of a broken or blank game screen.
 
   The host runs the game (host-authoritative)
     - The HOST device runs the only real simulation, at 60 steps per

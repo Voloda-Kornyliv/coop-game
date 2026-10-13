@@ -1,6 +1,9 @@
 // Every gameplay tunable lives here so balancing never means hunting through
 // code. Section numbers refer to GAME_DESIGN.txt.
 
+// Set by the loader in index.html from the <h1> title ('dev' in tests).
+export const VERSION = globalThis.GAME_VERSION || 'dev';
+
 export const TICK_RATE = 60;               // simulation steps per second (host only)
 export const TICK_DT = 1 / TICK_RATE;
 export const SNAPSHOT_EVERY = 2;           // ticks between snapshots -> 30 snapshots/s

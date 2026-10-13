@@ -71,7 +71,15 @@ export class GameClient {
   handle(msg) {
     switch (msg.type) {
       case 'snap': {
-        const snap = decodeSnapshot(msg);
+        let snap;
+        try {
+          snap = decodeSnapshot(msg);
+        } catch (err) {
+          // A malformed snapshot (e.g. from a different build) must not
+          // freeze the screen; report it once and keep going.
+          if (!this.decodeFailed) { this.decodeFailed = true; console.error('Bad snapshot', err); this.setConnectionNotice('⚠️ Game data from the host could not be read. Reload the page on every device.'); }
+          return;
+        }
         const last = this.snaps[this.snaps.length - 1];
         if (last && snap.tick <= last.tick) return;   // stale / duplicate
         this.snaps.push(snap);
