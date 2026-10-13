@@ -73,6 +73,7 @@ function encodePlayer(sim, p, viewer, rect, shared) {
     p.emoteT > 0 ? p.emote : -1,
     p.level, Math.round(levelProgress(p.xp, p.level) * 100), Math.ceil(p.shield || 0),
     p.team, r10(p.reviveT || 0),
+    p.ammo ?? 0, p.stats.magazine, p.reloadT > 0 ? Math.round((1 - p.reloadT / p.stats.reloadTime) * 100) : -1,
   ];
 }
 
@@ -107,6 +108,8 @@ export function encodeSnapshot(sim, events, viewer, shared = sharedState(sim)) {
     x: sim.objects.map((o) => [o.id, OBJECT_IDS.indexOf(o.kind), r1(o.x), r1(o.y), o.r,
       Math.round((o.hp / o.maxHp) * 100), Math.round(o.aim * 100), o.charge > 0 ? 1 : 0]),
     q: sim.orbs.filter((o) => near(o.x, o.y)).map((o) => [o.id, r1(o.x), r1(o.y)]),
+    // Only for the receiving player: drives local movement prediction.
+    me: (({ ack, speed, predictable }) => [ack, r1(speed), predictable ? 1 : 0])(sim.predictionInfo(viewer)),
     e: events,
   };
 }
@@ -132,6 +135,9 @@ export function decodeSnapshot(s) {
       shield: a[18],
       team: a[19],
       reviveT: a[20] / 10,
+      ammo: a[21],
+      magazine: a[22],
+      reload: a[23] >= 0 ? a[23] / 100 : -1,
     });
   }
   const byId = (list, fn) => new Map(list.map((a) => [a[0], fn(a)]));
@@ -155,6 +161,7 @@ export function decodeSnapshot(s) {
     pickups: byId(s.u, (a) => ({ id: a[0], x: a[1], y: a[2] })),
     objects: byId(s.x, (a) => ({ id: a[0], kind: OBJECT_IDS[a[1]], x: a[2], y: a[3], r: a[4], hpPct: a[5] / 100, aim: a[6] / 100, charging: !!a[7] })),
     orbs: byId(s.q, (a) => ({ id: a[0], x: a[1], y: a[2] })),
+    self: s.me ? { ack: s.me[0], speed: s.me[1], predictable: !!s.me[2] } : null,
     events: s.e,
   };
 }
@@ -175,7 +182,8 @@ export function encodeInput(s) {
   return {
     type: 'in',
     mx: q(s.mx), my: q(s.my), ax: q(s.ax), ay: q(s.ay),
-    f: s.fire ? 1 : 0, d: s.dash, a: s.abil, i: s.item, e: s.emote, ei: s.emoteIdx,
+    f: s.fire ? 1 : 0, d: s.dash, a: s.abil, i: s.item, e: s.emote, ei: s.emoteIdx, r: s.reload,
     tc: s.touch ? 1 : 0,
+    s: s.seq,
   };
 }

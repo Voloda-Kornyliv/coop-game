@@ -88,6 +88,7 @@ const SOUNDS = {
   win: () => [523, 659, 784, 1046].forEach((f, i) => tone('triangle', f, f, 0.18, 0.2, i * 0.11)),
   emote: () => tone('sine', 700, 900, 0.08, 0.1),
   tshot: () => tone('square', 420, 160, 0.12, 0.08),
+  reload: () => { noise(0.05, 0.12, 'highpass', 3000); tone('square', 300, 300, 0.04, 0.06, 0.12); },
   orb: () => tone('sine', 1200 + Math.random() * 300, 1600, 0.06, 0.08),
   levelup: () => [523, 784, 1046, 1568].forEach((f, i) => tone('triangle', f, f * 1.01, 0.14, 0.18, i * 0.07)),
 };

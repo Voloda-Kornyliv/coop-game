@@ -228,6 +228,63 @@ body.in-game #menu { display: none; }
 #xp-fill { height: 100%; width: 0; background: linear-gradient(90deg, #4ee6e0, #7dffcf); transition: width 0.2s; }
 #xp-text { position: absolute; inset: 0; text-align: center; font-size: 10px; line-height: 14px; font-weight: 700; text-shadow: 0 1px 2px #000; }
 
+#ammo {
+  position: absolute;
+  left: max(54px, calc(env(safe-area-inset-left) + 46px));
+  top: calc(max(6px, env(safe-area-inset-top)) + 96px);
+  --reload: 0;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.25) calc(var(--reload) * 100%), var(--hud-bg) 0);
+  color: var(--hud-text);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: auto;
+}
+#ammo.low { color: #ff7a7a; }
+
+#toast {
+  position: absolute;
+  bottom: calc(max(8px, env(safe-area-inset-bottom)) + 48px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.toast {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(13, 15, 20, 0.85);
+  border: 1px solid #3a4152;
+  font-size: 13px;
+  white-space: nowrap;
+  animation: toast-life 2.6s ease-out forwards;
+}
+@keyframes toast-life {
+  0% { opacity: 0; transform: translateY(8px); }
+  10% { opacity: 1; transform: none; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.hud-ping {
+  flex: none;
+  align-self: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hud-bg);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.hud-ping.good { color: #3ddc84; }
+.hud-ping.ok { color: #ffd23f; }
+.hud-ping.bad { color: #ff5a5f; }
+
 #minimap {
   position: absolute;
   right: max(8px, env(safe-area-inset-right));

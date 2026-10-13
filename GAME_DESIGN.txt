@@ -1,6 +1,6 @@
 =====================================================================
   BLAST PARTY
-  Game design document, v0.2, 2026-10-13
+  Game design document, v0.3, 2026-10-13
 =====================================================================
 
   A top-down arena shooter for 2-8 friends in the same room. Everyone
@@ -11,6 +11,17 @@
   your character grows stronger over the match through XP, levels and
   stacking upgrades. The aim is to make people laugh, shout and
   immediately want "one more round".
+
+  CHANGES IN v0.3
+    - Smoother play on bad internet: game data uses a separate channel
+      that never waits for lost packets, your own movement is predicted
+      on your device, and a ping indicator is shown (section 15).
+    - The gun has a magazine and reloads; fewer bullets per second
+      (section 6). Two new upgrades: EXTENDED MAG and FAST HANDS.
+    - Players move 10% slower.
+    - More walls on every map (section 10).
+    - Picking up an item shows a small notification at the bottom
+      instead of a big announcement (section 8C).
 
   CHANGES IN v0.2
     - Bigger maps. The camera follows your player instead of showing
@@ -202,6 +213,7 @@
     Space               dash
     Q or right click    ability
     E                   use pickup
+    R                   reload
     1-4                 emotes
 
   GAMEPAD (planned): twin sticks, triggers to shoot, face buttons for
@@ -222,10 +234,16 @@
 
   Health:       100 HP at level 1. Levels (section 7) and upgrades
                 raise it.
-  Basic gun:    about 4 shots per second, 20 damage per bullet at
-                level 1, unlimited ammo.
-  Movement:     fairly fast and responsive, with no inertia (except on
-                ice).
+  Basic gun:    about 3 shots per second, 20 damage per bullet at
+                level 1.
+  Magazine:     8 shots. When it's empty the gun reloads automatically
+                (1.4 seconds). If you stop shooting for 1 second with a
+                part-empty magazine, it reloads too. On a laptop, R
+                reloads at any time. A ring around your character shows
+                the reload, and the HUD shows your ammo. The Minigun
+                pickup doesn't use ammo.
+  Movement:     responsive, with no inertia (except on ice). Speed is
+                243 units per second (10% slower than v0.2).
   Dash:         about 200 units in 0.15 seconds, with a 2 second
                 cooldown. You can't be hurt or affected while dashing.
   Knockback:    every hit pushes the target back a little. This adds
@@ -381,6 +399,8 @@
     TINY               25% smaller and harder to hit, -10 max HP.
     RICOCHET RAGE      Bullets speed up and deal +5 damage after each
                        wall hit.
+    EXTENDED MAG       +4 shots in the magazine.
+    FAST HANDS         Reload 30% faster.
 
   Each upgrade has a maximum number of stacks (2-3), so builds can't
   go completely out of control.
@@ -399,6 +419,10 @@
 
   You can't see what's inside a box until you grab it. Boxes spawn over
   time and sometimes drop from crates.
+
+  When you grab or use an item, a small notification appears at the
+  bottom of the screen (for example "🦖 Giant Mode: press E / tap 🎒").
+  It never covers the middle of the screen.
 
 
 ---------------------------------------------------------------------
@@ -465,6 +489,10 @@
   Each round uses a random map, or the one the host locked in the
   lobby. Every map is mirrored so all spawn points are equally fair. In
   Team mode the two teams spawn on opposite halves.
+
+  Every map has plenty of walls: cover to hide behind, corridors and
+  corners to fight around. Open areas without any walls are kept small,
+  so you can always find cover to reload behind.
 
     BACKYARD      2800 x 1600   The starter map. Hedges (bushes), garden
                                 sheds (walls), lots of crates, BBQ
@@ -679,12 +707,28 @@
            lost or counted twice.
         2. draws the world from the snapshots the host sends back,
            30 per second.
-    - Devices draw about 80 ms in the past and smoothly interpolate
-      between snapshots. Your own aim is drawn from your local input
-      immediately.
-    - Planned: predict your own movement locally, if the game feels
-      sluggish on real phones.
+    - Devices draw other players slightly in the past and smoothly
+      interpolate between snapshots. The delay adapts to the connection:
+      about 70 ms on good Wi-Fi, up to about 200 ms on a bad connection.
+      If snapshots stop for a moment, things keep moving briefly
+      (extrapolation) instead of freezing.
+    - YOUR OWN character is predicted: it moves the moment you press,
+      and is corrected smoothly toward where the host says you are. Your
+      aim is also drawn from your local input immediately.
     - The host checks everything other players send before using it.
+
+  Bad connections (v0.3)
+    - Each guest has TWO channels to the host:
+        * a reliable, ordered one for things that must arrive (lobby,
+          draft cards, picks, results, roster), and
+        * a fast, UNORDERED one for snapshots and input. A lost packet
+          never holds up the newer ones behind it, which is what used
+          to freeze the game on bad internet. Old or out-of-order
+          messages are simply ignored (inputs carry a sequence number).
+    - The host skips snapshots to a player whose connection is backed
+      up, so delay never builds up.
+    - Ping indicator in the HUD (top right, next to the sound button):
+      green under 80 ms, yellow under 200 ms, red above.
 
   Bigger maps and the camera
     - The host sends each player only what's near them (their view plus
@@ -703,7 +747,7 @@
     - The host keeps the player's slot (score, upgrades, XP) for 60
       seconds during a game, or 15 seconds in the lobby.
     - While someone reconnects, the round PAUSES for everyone ("⏸
-      Waiting for Bob to reconnect…") for up to 20 seconds. After that
+      Waiting for Bob to reconnect…") for up to 10 seconds. After that
       the round continues with their character frozen in place.
     - Reloading the page or reopening the invite link and pressing Join
       brings you back as the SAME player. A random token per browser
@@ -764,6 +808,10 @@
         Team MVP award
     [x] From M11: the Jungle Ruins and Factory maps (moving crates on
         belts), the Demolition and Turret Tamer awards
+    [x] v0.3: fast unordered channel, own-movement prediction, adaptive
+        interpolation + extrapolation, ping indicator, magazine and
+        reload, EXTENDED MAG / FAST HANDS, slower movement, more walls,
+        pickup notifications
 
   Implementation notes (details decided while building v0.2)
     - Turrets need a clear line of sight past walls (crates and bushes
@@ -777,8 +825,7 @@
 
   NEXT
     M11 "MORE"
-        Ghosts throwing crates, drag-to-aim abilities, gamepad, local
-        movement prediction if needed.
+        Ghosts throwing crates, drag-to-aim abilities, gamepad.
 
     M12 "PLAYTEST"
         Play on real phones and tune config.js against the targets in

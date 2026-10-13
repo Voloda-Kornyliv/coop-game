@@ -12,7 +12,7 @@
 </head>
 <body>
   <main id="menu">
-    <h1>Blast Party v0.3</h1>
+    <h1>Blast Party v0.4</h1>
 
     <section id="home">
       <label for="name">Your name</label>
@@ -79,11 +79,14 @@
       <div class="hud-top">
         <button id="menu-btn" class="hud-btn" aria-label="Leave game">✕</button>
         <div id="scores"></div>
+        <span id="ping" class="hud-ping" hidden></span>
         <button id="sound-btn" class="hud-btn" aria-label="Toggle sound">🔇</button>
       </div>
       <div id="round-info"></div>
       <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text"></span></div>
       <div id="xp-bar" hidden><div id="xp-fill"></div><span id="xp-text"></span></div>
+      <button id="ammo" hidden aria-label="Reload"></button>
+      <div id="toast"></div>
       <canvas id="minimap"></canvas>
       <div id="notice" hidden></div>
       <div id="ghost-hint" hidden>👻 You're a ghost: <b>fire</b> to spook, <b>ability</b> to drop a banana</div>
@@ -150,6 +153,7 @@
         'net.js', 'game/config.js', 'game/geometry.js', 'game/maps.js', 'game/abilities.js',
         'game/objects.js', 'game/progression.js', 'game/sim.js', 'game/protocol.js', 'game/host.js',
         'game/client.js', 'game/render.js', 'game/input.js', 'game/ui.js', 'game/audio.js',
+        'game/prediction.js',
       ];
       const version = (document.querySelector('h1').textContent.match(/v\d+(\.\d+)*/) || ['dev'])[0];
       window.GAME_VERSION = version;

@@ -419,6 +419,8 @@ export const PASSIVES = {
   clock: { name: 'Cooldown Clock', icon: '⏱️', max: 3, desc: 'Ability cooldown -25%.' },
   tiny: { name: 'Tiny', icon: '🐜', max: 2, desc: '25% smaller and harder to hit, -10 max HP.' },
   rage: { name: 'Ricochet Rage', icon: '😤', max: 3, desc: 'Bullets speed up and deal +5 damage after each wall hit.' },
+  mag: { name: 'Extended Mag', icon: '🧰', max: 2, desc: '+4 shots in the magazine.' },
+  hands: { name: 'Fast Hands', icon: '🤹', max: 2, desc: 'Reload 30% faster.' },
 };
 
 // Stats come from upgrade stacks plus level (section 7), so there's no hidden
@@ -430,6 +432,8 @@ export function computeStats(passives, level = 1) {
     damageMult: 1 + PROGRESSION.damagePerLevel * lv,
     speed: PLAYER.speed * (1 + 0.15 * n('feet')),
     fireInterval: PLAYER.fireInterval / (1 + 0.2 * n('trigger')),
+    magazine: PLAYER.magazine + 4 * n('mag'),
+    reloadTime: PLAYER.reloadTime * 0.7 ** n('hands'),
     shots: 1 + n('split'),
     bulletR: PLAYER.bulletRadius * (1 + 0.5 * n('big')),
     bulletDmg: PLAYER.bulletDamage + 5 * n('big'),

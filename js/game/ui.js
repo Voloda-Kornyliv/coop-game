@@ -125,6 +125,16 @@ export class GameUI {
       this.set('dashCd', ghost ? 0 : me.dashCd, (v) => this.$('#btn-dash').style.setProperty('--cd', v));
       this.set('dashIcon', ghost ? '👻' : '💨', (v) => { this.$('#btn-dash .icon').textContent = v; });
 
+      // Ammo (section 6): tap it (or press R) to reload.
+      const ammoText = ghost || !inRound ? '' : me.reload >= 0 ? '🔄 Reloading…' : `🔫 ${me.ammo}/${me.magazine}`;
+      this.set('ammo', `${ammoText}|${me.reload >= 0 ? Math.round(me.reload * 20) : -1}`, () => {
+        const btn = this.$('#ammo');
+        btn.hidden = !ammoText;
+        btn.textContent = ammoText;
+        btn.classList.toggle('low', me.reload < 0 && me.ammo <= 2);
+        btn.style.setProperty('--reload', me.reload >= 0 ? me.reload : 0);
+      });
+
       const item = me.item ? PICKUPS[me.item] : null;
       this.set('item', me.item || '', () => {
         this.$('#btn-item .icon').textContent = item ? item.icon : '';
@@ -229,6 +239,23 @@ export class GameUI {
     this.$('#results-lobby').hidden = !this.h.isHost;
     this.$('#results-wait').hidden = this.h.isHost;
     this.$('#results').hidden = false;
+  }
+
+  // Small, short message at the bottom; never covers the middle of the screen.
+  toast(text) {
+    const box = this.$('#toast');
+    const div = el('div', 'toast', text);
+    box.append(div);
+    while (box.children.length > 2) box.firstChild.remove();
+    setTimeout(() => div.remove(), 2600);
+  }
+
+  setPing(ms) {
+    const el2 = this.$('#ping');
+    el2.hidden = false;
+    if (ms === 'host') { el2.textContent = 'HOST'; el2.className = 'hud-ping good'; return; }
+    el2.textContent = `${ms} ms`;
+    el2.className = `hud-ping ${ms < 80 ? 'good' : ms < 200 ? 'ok' : 'bad'}`;
   }
 
   setNotice(text) {

@@ -2,7 +2,7 @@
 // an interpolated view slightly in the past, and turns events into juice:
 // particles, sounds, vibration, kill feed and announcements.
 
-import { TICK_RATE, INPUT_SEND_MS, INTERP_DELAY_TICKS, TEAMS } from './config.js';
+import { TICK_RATE, INPUT_SEND_MS, SNAPSHOT_EVERY, NET, TEAMS } from './config.js';
 import { clamp, lerp, lerpAngle } from './geometry.js';
 import { decodeSnapshot, encodeInput } from './protocol.js';
 import { ACTIVES, ACTIVE_IDS, PICKUPS, PICKUP_IDS, VERBS } from './abilities.js';
@@ -10,8 +10,10 @@ import { Renderer } from './render.js';
 import { Input } from './input.js';
 import { GameUI } from './ui.js';
 import { audio } from './audio.js';
+import { Predictor } from './prediction.js';
 
 const MAX_BUFFER = 90;
+const STALE_EVENT_TICKS = 120;   // events older than ~2 s are dropped after a stall
 const BLIP_TIME = 1000;           // ms an enemy shot shows on the minimap
 const ATTACKER_TIME = 2000;      // ms an edge arrow points at whoever hit you
 const EFFECT_EMOJI = { sheep: '🐑', shrink: '🔬', reverse: '🌀', dance: '🕺', slip: '🍌', confused: '🙃', bighead: '🎈' };
@@ -37,6 +39,11 @@ export class GameClient {
     this.connNotice = '';
     this.blips = [];
     this.attackers = new Map();
+    this.seq = 0;
+    this.predictor = new Predictor();
+    this.delayTicks = NET.minDelayTicks + 1;
+    this.jitter = 0;
+    this.lastArrival = 0;
     this.aborter = new AbortController();
 
     root.hidden = false;
@@ -81,7 +88,8 @@ export class GameClient {
           return;
         }
         const last = this.snaps[this.snaps.length - 1];
-        if (last && snap.tick <= last.tick) return;   // stale / duplicate
+        if (last && snap.tick <= last.tick) return;   // stale / duplicate / out of order
+        this.measureJitter();
         this.snaps.push(snap);
         if (this.snaps.length > MAX_BUFFER) this.snaps.splice(0, this.snaps.length - MAX_BUFFER);
         break;
@@ -105,8 +113,25 @@ export class GameClient {
     const me = this.view?.me;
     const screen = me ? this.renderer.worldToScreen(me.x, me.y, me.confused) : null;
     const state = this.input.read(screen);
+    state.seq = ++this.seq;
     this.lastInput = state;
+    this.predictor.record(state.seq, state.mx, state.my);
     this.send(encodeInput(state));
+  }
+
+  // How uneven snapshot arrival is: drives the interpolation delay.
+  measureJitter() {
+    const now = performance.now();
+    if (this.lastArrival) {
+      const expected = (SNAPSHOT_EVERY * 1000) / TICK_RATE;
+      const gap = Math.min(1000, now - this.lastArrival);
+      this.jitter = this.jitter * 0.9 + Math.abs(gap - expected) * 0.1;
+    }
+    this.lastArrival = now;
+  }
+
+  setPing(ms) {
+    this.ui.setPing(ms);
   }
 
   // ------------------------------------------------------------ frame
@@ -114,6 +139,7 @@ export class GameClient {
   frame(now) {
     const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
+    this.frameDt = dt;
     this.advanceClock(dt);
     this.view = this.buildView();
     if (this.view) {
@@ -136,15 +162,22 @@ export class GameClient {
   advanceClock(dt) {
     const latest = this.snaps[this.snaps.length - 1];
     if (!latest) return;
-    const target = latest.tick - INTERP_DELAY_TICKS;
+    // Bigger delay on a jittery connection, smaller on good Wi-Fi.
+    const tickMs = 1000 / TICK_RATE;
+    const want = clamp(SNAPSHOT_EVERY + 1 + (this.jitter * 2.5) / tickMs, NET.minDelayTicks, NET.maxDelayTicks);
+    this.delayTicks += (want - this.delayTicks) * Math.min(1, dt * 0.5);
+    const target = latest.tick - this.delayTicks;
     if (this.renderTick === null || Math.abs(target - this.renderTick) > 30) {
+      // Fell behind (stall, then a burst): jump to the present. Events from
+      // the last ~2 s still play (pickups, kill feed); older ones are stale.
       this.renderTick = target;
-      for (const s of this.snaps) if (s.tick <= target) s.done = true;
+      for (const s of this.snaps) if (s.tick <= target - STALE_EVENT_TICKS) s.done = true;
     } else {
       this.renderTick += dt * TICK_RATE;
       this.renderTick += (target - this.renderTick) * Math.min(1, dt * 3);
     }
-    this.renderTick = Math.min(this.renderTick, latest.tick);
+    // If snapshots stall, keep things moving a little (extrapolate), then hold.
+    this.renderTick = Math.min(this.renderTick, latest.tick + NET.maxExtrapolateTicks);
   }
 
   setConnectionNotice(text) {
@@ -165,9 +198,14 @@ export class GameClient {
     if (!snaps.length || this.renderTick === null) return null;
     let i = snaps.length - 1;
     while (i > 0 && snaps[i].tick > this.renderTick) i--;
-    const a = snaps[i];
-    const b = snaps[i + 1] || a;
-    const t = b.tick > a.tick ? clamp((this.renderTick - a.tick) / (b.tick - a.tick), 0, 1) : 0;
+    let a = snaps[i];
+    let b = snaps[i + 1];
+    if (!b) {                            // past the newest snapshot: extrapolate from the last two
+      b = a;
+      if (i > 0) a = snaps[i - 1];
+    }
+    const span = b.tick - a.tick;
+    const t = span > 0 ? clamp((this.renderTick - a.tick) / span, 0, 1 + NET.maxExtrapolateTicks / span) : 0;
 
     // Drop snapshots we'll never need again (keep `a`).
     const old = snaps.slice(0, Math.max(0, i - 1));
@@ -191,8 +229,17 @@ export class GameClient {
       if (pa.alive !== pb.alive || !pa.hasPos || !pb.hasPos || !pa.seen) { o.x = pb.x; o.y = pb.y; }
     });
 
-    // Own aim is shown instantly from local input: aiming feels lag-free.
+    // Own player: predicted position (moves the moment you press) and aim
+    // straight from local input, so controls feel lag-free.
     const meIdx = players.findIndex((p) => p.num === this.myNum);
+    const latest = snaps[snaps.length - 1];
+    const base = latest.players.get(this.myNum);
+    if (meIdx >= 0 && base?.hasPos && latest.self && (base.alive || base.ghost) && latest.phase !== 'draft') {
+      const pos = this.predictor.update(base, latest.self, { map: latest.map, crates: [...latest.crates.values()], objects: [...latest.objects.values()] }, this.frameDt || 0.016);
+      players[meIdx] = { ...players[meIdx], x: pos.x, y: pos.y };
+    } else {
+      this.predictor.reset();
+    }
     if (meIdx >= 0 && this.lastInput && players[meIdx].alive) {
       players[meIdx] = { ...players[meIdx], aim: Math.atan2(this.lastInput.ay, this.lastInput.ax) };
     }
@@ -391,11 +438,18 @@ export class GameClient {
         const p = pos(a[0]);
         const item = PICKUPS[PICKUP_IDS[a[1]]];
         if (p && item) R.emoji(p.x, p.y - p.r - 30, item.icon, 28, 1);
-        if (item && isMe(a[0])) this.ui.announce(`${item.icon} ${item.name}!`);
+        if (item && isMe(a[0])) this.ui.toast(`${item.icon} ${item.name} used`);
         break;
       }
-      case 'pickup':
-        if (isMe(a[0])) audio.play('pickup');
+      case 'pickup': {
+        if (!isMe(a[0])) break;
+        audio.play('pickup');
+        const item = PICKUPS[PICKUP_IDS[a[1]]];
+        if (item) this.ui.toast(`${item.icon} ${item.name}: ${this.input.touchMode ? 'tap' : 'press E'} to use`);
+        break;
+      }
+      case 'reload':
+        if (isMe(a[0])) audio.play('reload', 0.2);
         break;
       case 'baa': {
         const p = pos(a[0]);

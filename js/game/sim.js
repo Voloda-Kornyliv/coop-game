@@ -145,6 +145,7 @@ export class Simulation {
     p.input = { mx: 0, my: 0, ax: Math.cos(p.aim), ay: Math.sin(p.aim), fire: false, touch: p.input.touch };
     p.counts = null;                   // a reloaded client restarts its counters
     p.pending = null;
+    p.lastSeq = 0;                     // ...and its input sequence numbers
     this.event(away ? 'away' : 'back', p.num);
   }
 
@@ -181,6 +182,10 @@ export class Simulation {
     p.item = null;
     p.potato = null;
     p.lastHit = null;
+    p.ammo = p.stats.magazine;
+    p.reloadT = 0;
+    p.idleT = 0;
+    p.moveSpeed = p.stats.speed;
     p.inBush = false;
     p.revealT = 0;
     p.revived = false;
@@ -192,7 +197,12 @@ export class Simulation {
   setInput(id, msg) {
     const p = this.players.get(id);
     if (!p || !msg) return;
-    const counts = { d: int(msg.d), a: int(msg.a), i: int(msg.i), e: int(msg.e) };
+    // Input travels on an unordered channel: ignore anything older than
+    // what we already have (sequence numbers only ever go up).
+    const seq = int(msg.s);
+    if (seq && seq <= (p.lastSeq || 0)) return;
+    p.lastSeq = seq;
+    const counts = { d: int(msg.d), a: int(msg.a), i: int(msg.i), e: int(msg.e), r: int(msg.r) };
     if (!p.counts) p.counts = counts;   // first input: don't replay old presses
     p.pending = counts;
     p.input = {
@@ -207,8 +217,10 @@ export class Simulation {
   // lost or duplicated no matter how input messages are batched.
   takePresses(p) {
     const now = p.pending, last = p.counts;
-    if (!now || !last) return { dash: false, abil: false, item: false, emote: false };
-    const out = { dash: now.d > last.d, abil: now.a > last.a, item: now.i > last.i, emote: now.e > last.e };
+    if (!now || !last) return { dash: false, abil: false, item: false, emote: false, reload: false };
+    const out = {
+      dash: now.d > last.d, abil: now.a > last.a, item: now.i > last.i, emote: now.e > last.e, reload: now.r > last.r,
+    };
     p.counts = now;
     return out;
   }
@@ -568,11 +580,12 @@ export class Simulation {
 
     this.movePlayer(p, dt);
     p.inBush = this.map.bushes.some((b) => pointInRect(p.x, p.y, b));
+    this.updateReload(p, dt, presses);
 
     if (inp.fire && p.fireCd <= 0 && !e.dance && !e.dash) {
       if (e.sheep) {
         if (p.baaCd <= 0) { this.event('baa', p.num); p.baaCd = 0.6; }
-      } else {
+      } else if (e.minigun > 0 || p.ammo > 0) {
         this.fire(p);
       }
     }
@@ -580,6 +593,23 @@ export class Simulation {
     if (p.stats.fireTrail && e.dash > 0 && this.tick % 2 === 0) this.spawnProp('fire', p.x, p.y, p.id);
     this.updatePotato(p, dt);
     this.applyHazards(p, dt);
+  }
+
+  // Magazine (section 6): reload when empty, after a pause in shooting, or on R.
+  updateReload(p, dt, presses) {
+    p.idleT += dt;
+    if (p.reloadT > 0) {
+      // Shooting with bullets left cancels an idle reload.
+      if (p.input.fire && p.ammo > 0) { p.reloadT = 0; return; }
+      p.reloadT -= dt;
+      if (p.reloadT <= 0) { p.reloadT = 0; p.ammo = p.stats.magazine; }
+      return;
+    }
+    if (p.ammo >= p.stats.magazine) return;
+    if (p.ammo <= 0 || p.idleT >= PLAYER.idleReload || presses.reload) {
+      p.reloadT = p.stats.reloadTime;
+      this.event('reload', p.num);
+    }
   }
 
   movePlayer(p, dt) {
@@ -591,12 +621,14 @@ export class Simulation {
     if (m > 1) { mx /= m; my /= m; }
     if (e.reverse) { mx = -mx; my = -my; }
     const speed = p.stats.speed * (e.speed ? 1.7 : 1) * (e.shrink ? 1.35 : 1) * (e.giant ? 0.85 : 1) * (e.sheep ? 0.8 : 1);
+    p.moveSpeed = speed;               // sent to the player for movement prediction
     let tvx = mx * speed, tvy = my * speed;
     if (e.dance) { tvx = 0; tvy = 0; }
     if (e.slip) { tvx = p.slipDx * 380; tvy = p.slipDy * 380; }
     if (e.dash) { tvx = p.dashDx * PLAYER.dashSpeed; tvy = p.dashDy * PLAYER.dashSpeed; }
 
     const onIce = map.ice && !map.grip.some((g) => pointInRect(p.x, p.y, g));
+    p.onIce = onIce;
     if (onIce && !e.dash && !e.slip) {
       const k = 1 - Math.exp(-2.5 * dt);
       p.vx += (tvx - p.vx) * k;
@@ -710,6 +742,8 @@ export class Simulation {
     const minigun = p.e.minigun > 0;
     p.fireCd = p.stats.fireInterval * (minigun ? 0.3 : 1);
     p.revealT = BUSH.revealTime;
+    p.idleT = 0;
+    if (!minigun) p.ammo--;
     let aim = p.aim;
     if (p.input.touch) aim = this.assistAim(p, aim);
     const n = p.stats.shots;
@@ -781,7 +815,7 @@ export class Simulation {
       if (!p.item && d2 < (p.r + 16) ** 2) {
         k.dead = true;
         p.item = pick(PICKUP_IDS);
-        this.event('pickup', p.num);
+        this.event('pickup', p.num, PICKUP_IDS.indexOf(p.item));
       }
     }
   }
@@ -1362,6 +1396,17 @@ export class Simulation {
     if (target.inBush && target.revealT <= 0
       && dist2(viewer.x, viewer.y, target.x, target.y) > BUSH.revealDistance ** 2) return false;
     return true;
+  }
+
+  // What a player's own device needs to predict its movement (section 15):
+  // last input processed, current speed, and whether simple prediction holds.
+  predictionInfo(p) {
+    const e = p.e;
+    const knocked = Math.hypot(p.kvx, p.kvy) > 60;
+    const running = (this.phase === 'playing' || this.phase === 'roundEnd') && !this.paused;
+    const predictable = running && !p.away
+      && (p.ghost || (p.alive && !e.slip && !e.dash && !e.dance && !p.onIce && !knocked));
+    return { ack: p.lastSeq || 0, speed: p.ghost ? 360 : p.moveSpeed, predictable };
   }
 
   // The area the host sends to a player: their view plus a margin.

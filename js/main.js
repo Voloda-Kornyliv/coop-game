@@ -146,6 +146,7 @@ function joinGame(name, code) {
     .on('open', (c) => showLobby(c))
     .on('players', renderPlayers)
     .on('closed', (reason) => fail(reason))
+    .on('ping', (ms) => client?.setPing(ms))
     .on('reconnecting', () => {
       client?.setConnectionNotice('📡 Connection lost. Reconnecting…');
       setStatus('Connection lost. Reconnecting…', true);
@@ -170,11 +171,14 @@ function startClient() {
     root: $('game'),
     myId: session.id,
     isHost,
-    send: isHost ? (msg) => hostGame.onMessage(session.id, msg) : (msg) => session.send(msg),
+    // Input goes on the fast channel; picks etc. on the reliable one.
+    send: isHost ? (msg) => hostGame.onMessage(session.id, msg)
+      : (msg) => (msg.type === 'in' ? session.sendFast(msg) : session.send(msg)),
     onLeave: () => leave('You left the game.'),
     onPlayAgain: () => hostGame?.restart(),
     onLobby: () => hostBackToLobby(),
   });
+  if (isHost) client.setPing('host');
 }
 
 function startHostGame() {

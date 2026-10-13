@@ -8,7 +8,13 @@ export const TICK_RATE = 60;               // simulation steps per second (host 
 export const TICK_DT = 1 / TICK_RATE;
 export const SNAPSHOT_EVERY = 2;           // ticks between snapshots -> 30 snapshots/s
 export const INPUT_SEND_MS = 33;           // clients send input ~30 times/s
-export const INTERP_DELAY_TICKS = 5;       // render other entities ~83 ms in the past
+// Section 15: interpolation delay adapts to the connection (in ticks).
+export const NET = {
+  minDelayTicks: 4,                         // ~67 ms on good Wi-Fi
+  maxDelayTicks: 12,                        // ~200 ms on a bad connection
+  maxExtrapolateTicks: 4,                   // keep things moving briefly when snapshots stall
+  pingEveryMs: 1000,
+};
 
 export const MAX_PLAYERS = 8;
 
@@ -31,8 +37,11 @@ export const INTEREST = {
 export const PLAYER = {
   radius: 22,
   hp: 100,
-  speed: 270,
-  fireInterval: 0.25,
+  speed: 243,                               // v0.3: 10% slower
+  fireInterval: 0.3,                        // ~3 shots per second
+  magazine: 8,
+  reloadTime: 1.4,
+  idleReload: 1,                            // reload after this long without shooting
   bulletSpeed: 620,
   bulletRadius: 8,
   bulletDamage: 20,
@@ -63,7 +72,7 @@ export const ROUND = {
   crownHeal: 30,
   slowmoTime: 1.2,
   slowmoScale: 0.3,
-  maxPause: 20,                             // seconds a dropped player can pause the round
+  maxPause: 10,                             // seconds a dropped player can pause the round
 };
 
 // Section 7 and 12.

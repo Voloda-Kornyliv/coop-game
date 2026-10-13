@@ -602,6 +602,11 @@ export class Renderer {
 
     ctx.save();
     ctx.globalAlpha = alpha;
+    if (p.reload >= 0 && !p.decoy) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p.x, p.y, bodyR + 10, -Math.PI / 2, -Math.PI / 2 + TAU * p.reload); ctx.stroke();
+    }
     if (p.shield > 0) {
       ctx.strokeStyle = 'rgba(90,170,255,0.95)';
       ctx.lineWidth = 3;

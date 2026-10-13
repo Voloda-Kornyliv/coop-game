@@ -3,6 +3,11 @@
 // connect to it directly. Messages are JSON strings: serialized once per
 // broadcast, parsed defensively on arrival.
 //
+// Each guest has TWO channels to the host (section 15):
+//   ctrl  reliable + ordered: lobby, draft, results, roster, picks
+//   fast  UNORDERED: snapshots and input. A lost packet never holds up newer
+//         ones, which is what used to freeze the game on bad internet.
+//
 // Connections drop (Wi-Fi blips, locked phones), so a dropped guest is never
 // kicked straight away: the host keeps their slot for RECONNECT_WINDOW_MS and
 // the guest keeps retrying. Guests are identified by a random token (kept in
@@ -11,7 +16,7 @@
 
 /* global Peer */
 
-import { MAX_PLAYERS, VERSION } from './game/config.js';
+import { MAX_PLAYERS, VERSION, NET } from './game/config.js';
 
 const ID_PREFIX = 'coopgame-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';  // no 0/O/1/I confusion
@@ -22,7 +27,7 @@ const HEARTBEAT_MS = 2000;
 const TIMEOUT_MS = 8000;                // silence for this long = connection lost
 const FIRST_ATTEMPT_TIMEOUT_MS = 15000;
 const ATTEMPT_TIMEOUT_MS = 8000;        // one reconnection attempt
-const MAX_BUFFERED = 256 * 1024;        // skip droppable messages to a backed-up peer
+const MAX_BUFFERED = 64 * 1024;         // skip droppable messages to a backed-up peer
 
 function makeCode() {
   const bytes = crypto.getRandomValues(new Uint8Array(CODE_LENGTH));
@@ -67,6 +72,7 @@ export class HostSession extends Emitter {
     this.players = [];                  // [{ id, name, hat, isHost, away }]
     this.guests = new Map();            // player id -> { conn, lastSeen, token, away, awaySince }
     this.connToPlayer = new Map();      // connection peer id -> player id
+    this.pendingFast = new Map();       // token -> fast connection that arrived before its join
     this.closed = false;
     this.inGame = false;                // longer reconnect window while a game runs
     this.mode = 'ffa';
@@ -125,6 +131,7 @@ export class HostSession extends Emitter {
     });
 
     peer.on('connection', (conn) => {
+      if (conn.label === 'fast') { this.onFastConnection(conn); return; }
       conn.on('data', (data) => this.onData(conn, parse(data)));
       conn.on('close', () => this.onConnLost(conn));
       conn.on('error', () => this.onConnLost(conn));
@@ -147,6 +154,36 @@ export class HostSession extends Emitter {
     peer.on('disconnected', () => {
       setTimeout(() => { if (peer === this.peer && !peer.destroyed && !this.closed) peer.reconnect(); }, 1000);
     });
+  }
+
+  // The fast channel identifies itself with the player's token.
+  onFastConnection(conn) {
+    const token = typeof conn.metadata?.token === 'string' ? conn.metadata.token : '';
+    conn.on('data', (data) => this.onFastData(conn, parse(data)));
+    conn.on('close', () => {
+      for (const g of this.guests.values()) if (g.fast === conn) g.fast = null;
+    });
+    for (const g of this.guests.values()) {
+      if (token && g.token === token) { g.fast = conn; return; }
+    }
+    if (token) this.pendingFast.set(token, conn);
+  }
+
+  onFastData(conn, msg) {
+    if (!msg || this.closed) return;
+    for (const [id, g] of this.guests) {
+      if (g.fast !== conn) continue;
+      g.lastSeen = Date.now();
+      if (g.away) this.markBack(id);
+      if (msg.type === 'ping') { try { conn.send(JSON.stringify({ type: 'pong', t: msg.t })); } catch { /* closing */ } }
+      else this.emit('message', id, msg);
+      return;
+    }
+  }
+
+  attachPendingFast(guest) {
+    const fast = guest.token && this.pendingFast.get(guest.token);
+    if (fast) { guest.fast = fast; this.pendingFast.delete(guest.token); }
   }
 
   playerIdFor(conn) {
@@ -180,6 +217,7 @@ export class HostSession extends Emitter {
         if (id && !this.inGame) this.setTeam(id, msg.team);
         break;
       case 'ping':
+        if (msg.t !== undefined) { try { conn.send(JSON.stringify({ type: 'pong', t: msg.t })); } catch { /* closing */ } }
         break;
       default:
         if (id) this.emit('message', id, msg);
@@ -201,8 +239,10 @@ export class HostSession extends Emitter {
       if (!token || g.token !== token) continue;
       if (g.conn !== conn) { try { g.conn.close(); } catch { /* already closed */ } }
       g.conn = conn;
+      g.fast = null;
       g.lastSeen = Date.now();
       this.connToPlayer.set(conn.peer, id);
+      this.attachPendingFast(g);
       conn.send(JSON.stringify({ type: 'welcome', code: this.code, playerId: id, version: VERSION }));
       const player = this.players.find((p) => p.id === id);
       if (g.away) this.markBack(id);
@@ -217,7 +257,9 @@ export class HostSession extends Emitter {
       return;
     }
     const player = { id: conn.peer, name: cleanName(msg.name), hat: cleanHat(msg.hat), isHost: false, away: false, team: this.smallerTeam() };
-    this.guests.set(player.id, { conn, lastSeen: Date.now(), token, away: false, awaySince: 0 });
+    const guest = { conn, fast: null, lastSeen: Date.now(), token, away: false, awaySince: 0 };
+    this.guests.set(player.id, guest);
+    this.attachPendingFast(guest);
     this.connToPlayer.set(conn.peer, player.id);
     this.players.push(player);
     conn.send(JSON.stringify({ type: 'welcome', code: this.code, playerId: player.id, version: VERSION }));
@@ -281,15 +323,18 @@ export class HostSession extends Emitter {
     this.emit('players', this.players, this.mode);
   }
 
-  sendRaw(id, data, droppable) {
+  sendRaw(id, data, droppable, fast = false) {
     const g = this.guests.get(id);
-    if (!g || !g.conn.open) return;
-    if (droppable && g.conn.dataChannel?.bufferedAmount > MAX_BUFFERED) return;
-    try { g.conn.send(data); } catch { /* channel closing; heartbeat notices */ }
+    if (!g) return;
+    const conn = fast && g.fast?.open ? g.fast : g.conn;
+    if (!conn.open) return;
+    // A backed-up connection gets no new snapshots, so delay never builds up.
+    if (droppable && conn.dataChannel?.bufferedAmount > MAX_BUFFERED) return;
+    try { conn.send(data); } catch { /* channel closing; heartbeat notices */ }
   }
 
-  send(id, msg, { droppable = false } = {}) {
-    this.sendRaw(id, JSON.stringify(msg), droppable);
+  send(id, msg, { droppable = false, fast = false } = {}) {
+    this.sendRaw(id, JSON.stringify(msg), droppable, fast);
   }
 
   broadcast(msg, { droppable = false } = {}) {
@@ -359,7 +404,14 @@ export class GuestSession extends Emitter {
       const conn = peer.connect(ID_PREFIX + this.code, { reliable: true, serialization: 'raw' });
       this.conn = conn;
       conn.on('open', () => {
-        if (current()) this.send({ type: 'join', name: this.name, hat: this.hat, token: this.token, version: VERSION });
+        if (!current()) return;
+        this.send({ type: 'join', name: this.name, hat: this.hat, token: this.token, version: VERSION });
+        // Second, unordered channel for snapshots and input.
+        const fast = peer.connect(ID_PREFIX + this.code, {
+          reliable: false, serialization: 'raw', label: 'fast', metadata: { token: this.token },
+        });
+        this.fast = fast;
+        fast.on('data', (data) => { if (current()) this.onData(parse(data)); });
       });
       conn.on('data', (data) => { if (current()) this.onData(parse(data)); });
       conn.on('close', () => { if (current()) this.connectionLost('Lost connection to the host.'); });
@@ -391,6 +443,8 @@ export class GuestSession extends Emitter {
         if (typeof msg.playerId === 'string') this.id = msg.playerId;
         clearInterval(this.heartbeat);
         this.heartbeat = setInterval(() => this.tickHeartbeat(), HEARTBEAT_MS);
+        clearInterval(this.pingTimer);
+        this.pingTimer = setInterval(() => this.sendFast({ type: 'ping', t: performance.now() }), NET.pingEveryMs);
         const wasReconnecting = this.reconnecting;
         this.reconnecting = false;
         if (!this.joined) {
@@ -406,6 +460,14 @@ export class GuestSession extends Emitter {
         this.mode = msg.mode === 'teams' ? 'teams' : 'ffa';
         this.emit('players', this.players, this.mode);
         break;
+      case 'pong': {
+        const rtt = performance.now() - Number(msg.t);
+        if (Number.isFinite(rtt) && rtt >= 0) {
+          this.ping = this.ping === undefined ? rtt : this.ping * 0.7 + rtt * 0.3;
+          this.emit('ping', Math.round(this.ping));
+        }
+        break;
+      }
       case 'rejected':
         this.fail(String(msg.reason || 'Rejected by host.'));
         break;
@@ -449,6 +511,14 @@ export class GuestSession extends Emitter {
     }
   }
 
+  // Snapshots/input path: the unordered channel when it's up.
+  sendFast(msg) {
+    const conn = this.fast?.open ? this.fast : this.conn;
+    if (conn?.open) {
+      try { conn.send(JSON.stringify(msg)); } catch { /* closing */ }
+    }
+  }
+
   setHat(hat) {
     this.hat = hat;
     this.send({ type: 'hat', hat });
@@ -475,12 +545,14 @@ export class GuestSession extends Emitter {
     const peer = this.peer;
     this.peer = null;
     this.conn = null;
+    this.fast = null;
     if (peer) setTimeout(() => peer.destroy(), 200);
   }
 
   cleanup() {
     this.closed = true;
     clearInterval(this.heartbeat);
+    clearInterval(this.pingTimer);
     clearTimeout(this.attemptTimer);
     clearTimeout(this.retryTimer);
     this.destroyPeer();

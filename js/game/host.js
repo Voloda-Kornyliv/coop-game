@@ -57,7 +57,7 @@ export class HostGame {
     for (const p of sim.players.values()) {
       const snap = encodeSnapshot(sim, events, p, shared);
       if (p.id === this.session.id) this.local?.handle(snap);
-      else this.session.send(p.id, snap, { droppable: true });
+      else this.session.send(p.id, snap, { droppable: true, fast: true });
     }
   }
 
