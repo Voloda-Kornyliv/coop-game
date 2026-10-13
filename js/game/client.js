@@ -2,7 +2,7 @@
 // an interpolated view slightly in the past, and turns events into juice:
 // particles, sounds, vibration, kill feed and announcements.
 
-import { TICK_RATE, INPUT_SEND_MS, INTERP_DELAY_TICKS } from './config.js';
+import { TICK_RATE, INPUT_SEND_MS, INTERP_DELAY_TICKS, TEAMS } from './config.js';
 import { clamp, lerp, lerpAngle } from './geometry.js';
 import { decodeSnapshot, encodeInput } from './protocol.js';
 import { ACTIVES, ACTIVE_IDS, PICKUPS, PICKUP_IDS, VERBS } from './abilities.js';
@@ -12,6 +12,8 @@ import { GameUI } from './ui.js';
 import { audio } from './audio.js';
 
 const MAX_BUFFER = 90;
+const BLIP_TIME = 1000;           // ms an enemy shot shows on the minimap
+const ATTACKER_TIME = 2000;      // ms an edge arrow points at whoever hit you
 const EFFECT_EMOJI = { sheep: '🐑', shrink: '🔬', reverse: '🌀', dance: '🕺', slip: '🍌', confused: '🙃', bighead: '🎈' };
 
 function vibrate(ms) {
@@ -33,10 +35,12 @@ export class GameClient {
     this.recentKOs = [];
     this.wentFullscreen = false;
     this.connNotice = '';
+    this.blips = [];
+    this.attackers = new Map();
     this.aborter = new AbortController();
 
     root.hidden = false;
-    this.renderer = new Renderer(root.querySelector('#canvas'));
+    this.renderer = new Renderer(root.querySelector('#canvas'), root.querySelector('#minimap'));
     this.input = new Input(root, { onTouch: () => this.enterFullscreen() });
     this.ui = new GameUI(root, {
       isHost,
@@ -79,7 +83,7 @@ export class GameClient {
         this.myNum = msg.players.find((p) => p.id === this.myId)?.num || 0;
         break;
       case 'offer':
-        this.ui.showOffer(msg.cards);
+        this.ui.showOffer(msg.cards, !!msg.skipped);
         break;
       case 'results':
         this.pendingResults = msg;
@@ -175,7 +179,8 @@ export class GameClient {
 
     const players = lerpMap(a.players, b.players, (o, pa, pb) => {
       o.aim = lerpAngle(pa.aim, pb.aim, t);
-      if (pa.alive !== pb.alive) { o.x = pb.x; o.y = pb.y; }
+      // Don't slide from a hidden/unknown position or across a death.
+      if (pa.alive !== pb.alive || !pa.hasPos || !pb.hasPos || !pa.seen) { o.x = pb.x; o.y = pb.y; }
     });
 
     // Own aim is shown instantly from local input: aiming feels lag-free.
@@ -185,6 +190,11 @@ export class GameClient {
     }
     const me = meIdx >= 0 ? players[meIdx] : null;
 
+    const now = performance.now();
+    this.blips = this.blips.filter((bl) => now - bl.t < BLIP_TIME);
+    for (const [num, at] of this.attackers) if (now - at.t > ATTACKER_TIME) this.attackers.delete(num);
+    const zone = b.zone && a.zone && a.zone.r && b.zone.r ? { ...b.zone, r: lerp(a.zone.r, b.zone.r, t) } : b.zone;
+
     return {
       tick: this.renderTick,
       phase: b.phase,
@@ -192,14 +202,21 @@ export class GameClient {
       paused: b.paused,
       round: b.round,
       map: b.map,
+      mode: b.mode,
+      teamScores: b.teamScores,
       roundTime: lerp(a.roundTime, b.roundTime, t),
-      zone: lerp(a.zone || b.zone, b.zone, t),
+      zone,
+      finalZone: b.finalZone,
       players,
       byNum: new Map(players.map((p) => [p.num, p])),
       bullets: lerpMap(a.bullets, b.bullets),
       props: lerpMap(a.props, b.props),
-      crates: b.crates,
+      crates: [...b.crates.values()],
       pickups: lerpMap(a.pickups, b.pickups),
+      objects: [...b.objects.values()],
+      orbs: lerpMap(a.orbs, b.orbs),
+      blips: this.blips.map((bl) => ({ x: bl.x, y: bl.y, age: (now - bl.t) / BLIP_TIME })),
+      attackers: this.attackers,
       roster: this.roster,
       myNum: this.myNum,
       me,
@@ -246,35 +263,81 @@ export class GameClient {
   onEvent([type, ...a]) {
     const v = this.view;
     const R = this.renderer;
-    const pos = (num) => v.byNum.get(num);
+    // Only players we can actually see have a usable position.
+    const pos = (num) => { const p = v.byNum.get(num); return p?.seen ? p : null; };
     const isMe = (num) => num === this.myNum && num !== 0;
+    const isEnemy = (num) => !isMe(num) && !(v.mode === 'teams' && v.me && v.byNum.get(num)?.team === v.me.team);
+    // Positional sound: full volume nearby, fading out across the map.
+    const near = (x, y) => {
+      const c = R.cam;
+      if (!c) return 1;
+      const d = Math.hypot(x - c.x, y - c.y);
+      return Math.max(0, Math.min(1, 1 - (d - 700) / 1100));
+    };
 
     switch (type) {
       case 'shot': {
-        const p = pos(a[0]);
-        if (p) {
-          R.light(p.x, p.y, 150, 0.12);
-          if (isMe(a[0]) || !p.invis) R.burst(p.x + Math.cos(p.aim) * p.r, p.y + Math.sin(p.aim) * p.r, '#fff3b0', 2, 80, 3);
-        }
-        audio.play('shot', isMe(a[0]) ? 0.03 : 0.06);
+        const [num, x, y] = a;
+        const p = pos(num);
+        R.light(x, y, 150, 0.12);
+        if (p && (isMe(num) || !p.invis)) R.burst(p.x + Math.cos(p.aim) * p.r, p.y + Math.sin(p.aim) * p.r, '#fff3b0', 2, 80, 3);
+        if (isEnemy(num)) this.blips.push({ x, y, t: performance.now() });
+        audio.play('shot', isMe(num) ? 0.03 : 0.06, isMe(num) ? 1 : near(x, y));
         break;
       }
+      case 'tshot':
+        audio.play('tshot', 0.08, near(a[0], a[1]));
+        break;
       case 'hit': {
-        const [num, amount, by] = a;
+        const [num, amount, by, ax, ay] = a;
         const p = pos(num);
         if (p) {
           R.burst(p.x, p.y, this.roster.get(num)?.color || '#fff', 8, 220);
           R.text(p.x, p.y - p.r - 10, `-${amount}`, isMe(num) ? '#ff5a5f' : '#ffffff', 16);
         }
-        if (isMe(num)) { R.shake(8); audio.play('hurt'); vibrate(35); }
-        else if (isMe(by)) audio.play('hit');
+        if (isMe(num)) {
+          R.shake(8); audio.play('hurt'); vibrate(35);
+          if (by) this.attackers.set(by, { x: ax, y: ay, t: performance.now() });
+        } else if (isMe(by)) audio.play('hit');
         break;
       }
+      case 'levelUp': {
+        const [num, level] = a;
+        const p = pos(num);
+        if (p) { R.ring(p.x, p.y, 70, 'rgba(255,210,63,0.9)', 0.5); R.text(p.x, p.y - p.r - 24, 'LEVEL UP!', '#ffd23f', 16); }
+        if (isMe(num)) { this.ui.announce(`LEVEL UP! Lv ${level}`, 'good'); vibrate(40); }
+        audio.play('levelup', 0.2, isMe(num) ? 1 : 0.5);
+        break;
+      }
+      case 'catchUp':
+        if (isMe(a[0])) this.ui.announce(`⬆️ Catch-up boost: Lv ${a[1]}`, 'good');
+        break;
+      case 'orb':
+        if (isMe(a[0])) audio.play('orb', 0.05);
+        break;
+      case 'objDown': {
+        const [kind, x, y] = a;
+        if (kind === 2) { R.burst(x, y, '#ffd23f', 40, 420, 7); R.ring(x, y, 120, 'rgba(255,210,63,0.9)', 0.6); R.shake(6); }
+        else R.burst(x, y, kind === 0 ? '#8a93a8' : '#c92a2a', 20, 300, 6);
+        audio.play('hit', 0.05, near(x, y));
+        break;
+      }
+      case 'teamWin': {
+        const mine = v.me && v.me.team === a[0];
+        this.ui.announce(mine ? 'YOUR TEAM WINS THE ROUND!' : `${TEAMS.names[a[0]]} TEAM wins the round!`, mine ? 'good' : '');
+        audio.play('win');
+        break;
+      }
+      case 'revive':
+        this.ui.feed([this.name(a[1]), ' revived ', this.name(a[0])]);
+        if (isMe(a[0])) this.ui.announce('REVIVED!', 'good');
+        audio.play('levelup', 0.2);
+        break;
       case 'ko': {
         const [victim, killer, verb, x, y] = a;
         R.confetti(x, y);
         R.shake(isMe(victim) ? 16 : 6);
-        audio.play('ko');
+        audio.play('ko', 0.03, isMe(victim) || isMe(killer) ? 1 : Math.max(0.3, near(x, y)));
         const [withKiller, alone] = VERBS[verb] || VERBS.bullet;
         if (verb === 'left') this.ui.feed([this.name(victim), ` ${alone}`]);
         else if (killer) this.ui.feed([this.name(killer), ` ${withKiller} `, this.name(victim)]);
@@ -294,8 +357,8 @@ export class GameClient {
           R.ring(x, y, radius, 'rgba(255,170,60,0.9)', 0.4);
           R.burst(x, y, '#ff9a3c', 22, radius * 3, 6);
           R.light(x, y, radius * 2, 0.3);
-          R.shake(10);
-          audio.play('boom');
+          R.shake(near(x, y) > 0.8 ? 10 : 0);
+          audio.play('boom', 0.03, near(x, y));
         } else {
           R.burst(x, y, '#fff3b0', 10, 300, 4);
           R.light(x, y, 200, 0.15);

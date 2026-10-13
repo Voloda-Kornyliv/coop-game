@@ -4,7 +4,7 @@
 
 import { TICK_DT, SNAPSHOT_EVERY } from './config.js';
 import { Simulation } from './sim.js';
-import { encodeSnapshot, encodeRoster } from './protocol.js';
+import { encodeSnapshot, encodeRoster, sharedState } from './protocol.js';
 
 const MAX_CATCHUP = 0.25;   // seconds; after a long stall we drop time instead of fast-forwarding
 
@@ -51,7 +51,14 @@ export class HostGame {
       else if (to === this.session.id) this.local?.handle(msg);
       else this.session.send(to, msg);
     }
-    this.toAll(encodeSnapshot(sim, sim.drainEvents()), true);
+    // Every player gets their own snapshot: only what's near them (section 15).
+    const events = sim.drainEvents();
+    const shared = sharedState(sim);
+    for (const p of sim.players.values()) {
+      const snap = encodeSnapshot(sim, events, p, shared);
+      if (p.id === this.session.id) this.local?.handle(snap);
+      else this.session.send(p.id, snap, { droppable: true });
+    }
   }
 
   toAll(msg, droppable = false) {

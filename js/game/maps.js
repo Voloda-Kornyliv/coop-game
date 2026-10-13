@@ -1,111 +1,179 @@
-// Arena layouts as plain data. Maps are shared code, so only the map index goes
-// over the network. Layouts are mirrored so every spawn point is equally fair.
+// Map layouts as plain data (GAME_DESIGN.txt section 10). Maps are shared
+// code, so only the map index goes over the network.
+//
+// Most content is written for the TOP-LEFT QUARTER and mirrored into all four
+// quarters, which keeps every map fair. Things on the centre lines are listed
+// explicitly. Points are [x, y] centres; rects are { x, y, w, h }.
 
-import { WORLD_W as W, WORLD_H as H } from './config.js';
 import { mirror4, mirrorX, mirrorY } from './geometry.js';
 
-const crate = (x, y) => ({ x, y, w: 46, h: 46 });
+const CRATE = 46;
 
-const SPAWNS = [
-  { x: 110, y: 110 }, { x: 800, y: 80 }, { x: 1490, y: 110 }, { x: 1520, y: 450 },
-  { x: 1490, y: 790 }, { x: 800, y: 820 }, { x: 110, y: 790 }, { x: 80, y: 450 },
-];
+// 8 spawns, point-symmetric: the left half (x < W/2) and right half mirror each
+// other, which also gives Team mode its two sides.
+function spawnsFor(W, H) {
+  const left = [[180, 180], [180, H - 180], [140, H / 2], [Math.round(W * 0.42), 140]];
+  return [...left, ...left.map(([x, y]) => [W - x, H - y])].map(([x, y]) => ({ x, y }));
+}
 
-function map(def) {
+function makeMap(def) {
+  const W = def.w, H = def.h;
+  const q = def.quad || {};
+  const rects4 = (list = []) => list.flatMap((r) => mirror4(r, W, H));
+  const points4 = (list = []) => list.flatMap(([x, y, ...rest]) => [
+    [x, y, ...rest], [W - x, y, ...rest], [x, H - y, ...rest], [W - x, H - y, ...rest],
+  ]);
+  const toPoint = ([x, y]) => ({ x, y });
+  const toCrate = ([x, y]) => ({ x: x - CRATE / 2, y: y - CRATE / 2, w: CRATE, h: CRATE });
+
   return {
-    walls: [], crates: [], lava: [], conveyors: [], bumpers: [],
-    ice: false, dark: false, spawns: SPAWNS,
-    ...def,
+    id: def.id,
+    name: def.name,
+    w: W,
+    h: H,
+    floor: def.floor,
+    ice: !!def.ice,
+    dark: !!def.dark,
+    walls: [...rects4(q.walls), ...(def.walls || [])],
+    lava: [...rects4(q.lava), ...(def.lava || [])],
+    bushes: [...rects4(q.bushes), ...(def.bushes || [])],
+    grip: [...rects4(q.grip), ...(def.grip || [])],
+    conveyors: def.conveyors || [],
+    bumpers: [...points4(q.bumpers), ...(def.bumpers || [])].map(([x, y, r]) => ({ x, y, r })),
+    crates: [...points4(q.crates), ...(def.crates || [])].map(toCrate),
+    barrels: [...points4(q.barrels), ...(def.barrels || [])].map(toPoint),
+    turrets: [...points4(q.turrets), ...(def.turrets || [])].map(toPoint),
+    vault: def.vault ? toPoint(def.vault) : { x: W / 2, y: H / 2 },
+    spawns: spawnsFor(W, H),
   };
 }
 
+// Points mirrored across one centre line.
+const pY = (x, y, H) => [[x, y], [x, H - y]];
+const pX = (x, y, W) => [[x, y], [W - x, y]];
+
 function ring(cx, cy, radius, count) {
   return Array.from({ length: count }, (_, i) => {
-    const a = (i / count) * Math.PI * 2;
-    return crate(cx + Math.cos(a) * radius - 23, cy + Math.sin(a) * radius - 23);
+    const a = (i / count) * Math.PI * 2 + Math.PI / count;
+    return [Math.round(cx + Math.cos(a) * radius), Math.round(cy + Math.sin(a) * radius)];
   });
 }
 
 export const MAPS = [
-  map({
-    id: 'backyard',
-    name: 'Backyard',
-    floor: '#2b3a2e',
-    walls: [
-      ...mirror4({ x: 280, y: 190, w: 180, h: 28 }, W, H),
-      ...mirror4({ x: 280, y: 190, w: 28, h: 150 }, W, H),
-      { x: 770, y: 400, w: 60, h: 100 },
-    ],
-    crates: [
-      ...mirror4(crate(520, 300), W, H),
-      ...mirrorY(crate(777, 220), H),
-      ...mirrorX(crate(430, 427), W),
-      ...mirror4(crate(180, 300), W, H),
-    ],
+  makeMap({
+    id: 'backyard', name: 'Backyard', w: 2800, h: 1600, floor: '#2b3a2e',
+    quad: {
+      walls: [
+        { x: 420, y: 330, w: 220, h: 28 }, { x: 420, y: 330, w: 28, h: 170 },   // garden shed
+        { x: 850, y: 560, w: 28, h: 180 },                                         // fence
+        { x: 1240, y: 640, w: 110, h: 24 }, { x: 1240, y: 640, w: 24, h: 90 },     // greenhouse
+      ],
+      bushes: [{ x: 230, y: 560, w: 150, h: 110 }, { x: 880, y: 200, w: 200, h: 90 }, { x: 620, y: 660, w: 160, h: 80 }],
+      crates: [[620, 520], [668, 520], [620, 568], [1000, 420], [1048, 420], [300, 420], [760, 240], [1100, 620], [520, 720], [1240, 470]],
+      barrels: [[560, 620], [1150, 330]],
+    },
+    bushes: mirrorY({ x: 1330, y: 250, w: 140, h: 100 }, 1600),
+    turrets: [...pX(650, 800, 2800), ...pY(1400, 560, 1600)],
+    vault: [1400, 800],
   }),
-  map({
-    id: 'ice',
-    name: 'Ice Rink',
-    floor: '#27404f',
-    ice: true,
-    walls: mirror4({ x: 350, y: 250, w: 120, h: 28 }, W, H),
-    crates: ring(W / 2, H / 2, 170, 6),
+
+  makeMap({
+    id: 'ice', name: 'Ice Rink', w: 3000, h: 1700, floor: '#27404f', ice: true,
+    quad: {
+      walls: [{ x: 850, y: 320, w: 220, h: 28 }, { x: 480, y: 600, w: 28, h: 160 }],
+      grip: [{ x: 560, y: 380, w: 220, h: 140 }, { x: 1120, y: 600, w: 200, h: 120 }],
+      bushes: [{ x: 300, y: 250, w: 160, h: 90 }],
+      crates: [[350, 450], [398, 450], [1000, 180], [1048, 180], [700, 700], [1300, 420], [1300, 468]],
+      barrels: [[760, 520], [260, 700]],
+      turrets: [[1000, 600]],
+    },
+    crates: ring(1500, 850, 230, 8),
+    turrets: pY(1500, 330, 1700),
+    vault: [1500, 850],
   }),
-  map({
-    id: 'lava',
-    name: 'Lava Lab',
-    floor: '#2e2a33',
-    lava: [
-      { x: 690, y: 375, w: 220, h: 150 },
-      ...mirror4({ x: 330, y: 230, w: 130, h: 100 }, W, H),
-    ],
-    walls: mirror4({ x: 560, y: 120, w: 28, h: 170 }, W, H),
-    crates: mirrorY(crate(777, 200), H),
+
+  makeMap({
+    id: 'lava', name: 'Lava Lab', w: 3000, h: 1700, floor: '#2e2a33',
+    quad: {
+      lava: [{ x: 950, y: 0, w: 110, h: 300 }, { x: 950, y: 420, w: 110, h: 360 }],   // rivers with bridges
+      walls: [{ x: 450, y: 330, w: 28, h: 200 }, { x: 1200, y: 300, w: 200, h: 28 }],
+      crates: [[700, 250], [748, 250], [250, 640], [1250, 450], [800, 600]],
+      barrels: [[600, 700], [1150, 560], [300, 480], [820, 420]],
+      turrets: [[650, 450], [1300, 700]],
+    },
+    lava: mirrorY({ x: 1350, y: 520, w: 300, h: 80 }, 1700),
+    vault: [1500, 850],
   }),
-  map({
-    id: 'conveyor',
-    name: 'Conveyor',
-    floor: '#33302a',
+
+  makeMap({
+    id: 'factory', name: 'Factory', w: 3200, h: 1800, floor: '#33302a',
     conveyors: [
-      { x: 200, y: 290, w: 1200, h: 80, dx: -170, dy: 0 },
-      { x: 200, y: 530, w: 1200, h: 80, dx: 170, dy: 0 },
+      { x: 400, y: 380, w: 2400, h: 90, dx: 170, dy: 0 },
+      { x: 400, y: 1330, w: 2400, h: 90, dx: -170, dy: 0 },
+      { x: 640, y: 560, w: 90, h: 680, dx: 0, dy: 150 },
+      { x: 2470, y: 560, w: 90, h: 680, dx: 0, dy: -150 },
+      { x: 900, y: 855, w: 500, h: 90, dx: -170, dy: 0 },
+      { x: 1800, y: 855, w: 500, h: 90, dx: 170, dy: 0 },
     ],
-    walls: mirror4({ x: 420, y: 140, w: 28, h: 110 }, W, H),
-    crates: [
-      ...mirrorX(crate(320, 427), W),
-      ...mirrorX(crate(560, 427), W),
-      crate(777, 427),
-    ],
+    quad: {
+      walls: [{ x: 250, y: 620, w: 220, h: 28 }, { x: 1100, y: 130, w: 28, h: 180 }, { x: 1000, y: 600, w: 200, h: 28 }],
+      bushes: [{ x: 280, y: 480, w: 140, h: 100 }],
+      crates: [[400, 250], [448, 250], [900, 700], [1300, 620], [1300, 668]],
+      barrels: [[550, 750], [1450, 560]],
+      turrets: [[1150, 720]],
+    },
+    // Crates riding the belts become moving cover.
+    crates: [[800, 425], [1200, 425], [2000, 425], [2400, 425], [800, 1375], [1200, 1375], [2000, 1375], [2400, 1375], [1000, 900], [2200, 900]],
+    turrets: pY(1600, 250, 1800),
+    vault: [1600, 900],
   }),
-  map({
-    id: 'pinball',
-    name: 'Pinball',
-    floor: '#2a2740',
-    bumpers: [
-      { x: 800, y: 450, r: 55 },
-      { x: 480, y: 260, r: 38 }, { x: 1120, y: 260, r: 38 },
-      { x: 480, y: 640, r: 38 }, { x: 1120, y: 640, r: 38 },
-      { x: 800, y: 190, r: 30 }, { x: 800, y: 710, r: 30 },
-      { x: 300, y: 450, r: 32 }, { x: 1300, y: 450, r: 32 },
-    ],
-    walls: mirror4({ x: 220, y: 200, w: 28, h: 90 }, W, H),
-    crates: mirrorX(crate(620, 427), W),
+
+  makeMap({
+    id: 'pinball', name: 'Pinball', w: 2800, h: 1600, floor: '#2a2740',
+    quad: {
+      bumpers: [[700, 450, 40], [1100, 330, 34], [1150, 650, 36]],
+      walls: [{ x: 300, y: 250, w: 28, h: 140 }, { x: 950, y: 470, w: 120, h: 28 }],
+      bushes: [{ x: 150, y: 420, w: 120, h: 90 }],
+      crates: [[500, 200], [548, 200], [596, 200], [1300, 520], [1300, 568], [250, 600]],
+      barrels: [[600, 700], [1000, 740]],
+      turrets: [[800, 620]],
+    },
+    bumpers: [...pX(450, 800, 2800).map(([x, y]) => [x, y, 45]), ...pY(1400, 350, 1600).map(([x, y]) => [x, y, 40])],
+    vault: [1400, 800],
   }),
-  map({
-    id: 'dark',
-    name: 'Dark House',
-    floor: '#2c2c2c',
-    dark: true,
-    walls: [
-      ...mirror4({ x: 250, y: 240, w: 220, h: 28 }, W, H),
-      ...mirror4({ x: 600, y: 120, w: 28, h: 200 }, W, H),
-      ...mirrorX({ x: 420, y: 436, w: 200, h: 28 }, W),
-      { x: 786, y: 330, w: 28, h: 240 },
-    ],
-    crates: [
-      ...mirror4(crate(470, 330), W, H),
-      ...mirror4(crate(900, 170), W, H),
-    ],
+
+  makeMap({
+    id: 'dark', name: 'Dark House', w: 2800, h: 1600, floor: '#2c2c2c', dark: true,
+    quad: {
+      walls: [
+        { x: 380, y: 480, w: 420, h: 28 }, { x: 900, y: 480, w: 260, h: 28 },   // corridor walls with a door
+        { x: 880, y: 120, w: 28, h: 280 },
+        { x: 1150, y: 600, w: 110, h: 28 }, { x: 1150, y: 600, w: 28, h: 120 }, // centre room
+      ],
+      crates: [[500, 650], [548, 650], [1000, 300], [300, 350], [1300, 400]],
+      barrels: [[700, 700], [1050, 650]],
+      turrets: [[600, 250]],
+    },
+    vault: [1400, 800],
+  }),
+
+  makeMap({
+    id: 'jungle', name: 'Jungle Ruins', w: 3200, h: 1800, floor: '#26331f',
+    quad: {
+      bushes: [
+        { x: 300, y: 350, w: 260, h: 160 }, { x: 750, y: 150, w: 220, h: 140 }, { x: 900, y: 550, w: 240, h: 170 },
+        { x: 450, y: 700, w: 200, h: 120 }, { x: 1250, y: 300, w: 200, h: 150 },
+      ],
+      walls: [
+        { x: 620, y: 560, w: 28, h: 120 }, { x: 1050, y: 380, w: 150, h: 28 }, { x: 200, y: 600, w: 160, h: 28 },
+        { x: 1400, y: 700, w: 120, h: 28 }, { x: 1400, y: 700, w: 28, h: 110 },   // temple
+      ],
+      crates: [[500, 250], [1100, 720], [1148, 720], [300, 800]],
+      barrels: [[600, 450], [1250, 600]],
+      turrets: [[700, 420]],
+    },
+    turrets: pY(1600, 760, 1800),
+    vault: [1600, 900],
   }),
 ];
 

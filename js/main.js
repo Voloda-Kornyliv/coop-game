@@ -4,7 +4,7 @@
 import { HostSession, GuestSession, CODE_LENGTH } from './net.js';
 import { HostGame } from './game/host.js';
 import { GameClient } from './game/client.js';
-import { HATS, TARGET_WINS_OPTIONS, MAX_PLAYERS } from './game/config.js';
+import { HATS, TARGET_WINS_OPTIONS, MAX_PLAYERS, TEAMS } from './game/config.js';
 import { MAPS } from './game/maps.js';
 
 const $ = (id) => document.getElementById(id);
@@ -50,13 +50,26 @@ function showLobby(code) {
   renderHats();
 }
 
-function renderPlayers(players) {
+function renderPlayers(players, mode = session?.mode) {
+  const teams = mode === 'teams';
   const list = $('players');
   list.replaceChildren(...players.map((p) => {
     const li = document.createElement('li');
-    if (p.id === session?.id) li.classList.add('you');
+    const mine = p.id === session?.id;
+    if (mine) li.classList.add('you');
     const name = document.createElement('span');
     name.textContent = `${p.hat ? `${p.hat} ` : ''}${p.name}`;
+    if (teams) {
+      // Team badge: tap your own to switch sides (section 2).
+      const badge = document.createElement('button');
+      badge.className = 'team-badge';
+      badge.textContent = TEAMS.names[p.team] ?? '?';
+      badge.style.background = TEAMS.colors[p.team] ?? '#888';
+      badge.disabled = !mine;
+      badge.title = mine ? 'Switch team' : '';
+      badge.addEventListener('click', () => session?.setTeam(session.id, p.team === 0 ? 1 : 0));
+      name.prepend(badge);
+    }
     const tag = document.createElement('span');
     tag.className = 'tag';
     tag.textContent = [p.isHost && 'host', p.id === session?.id && 'you', p.away && '📡 reconnecting…'].filter(Boolean).join(' · ');
@@ -64,6 +77,8 @@ function renderPlayers(players) {
     return li;
   }));
   $('player-count').textContent = `(${players.length}/${MAX_PLAYERS})`;
+  $('mode-info').textContent = teams ? 'Mode: Team vs Team' : 'Mode: Free-for-all';
+  $('shuffle-btn').hidden = !(isHost && teams);
 }
 
 function renderHats() {
@@ -84,6 +99,7 @@ function renderHats() {
 
 function fillSettings() {
   $('target-wins').replaceChildren(...TARGET_WINS_OPTIONS.map((n) => new Option(`${n} wins`, n, n === 5, n === 5)));
+  $('mode').replaceChildren(new Option('Free-for-all', 'ffa', true, true), new Option('Teams', 'teams'));
   $('map-choice').replaceChildren(
     new Option('Random', 'random', true, true),
     ...MAPS.map((m) => new Option(m.name, m.id)),
@@ -163,9 +179,11 @@ function startClient() {
 
 function startHostGame() {
   if (!isHost || hostGame) return;
+  const mode = $('mode').value;
+  if (mode === 'teams') session.rebalanceTeams();
   hostGame = new HostGame({
     session,
-    settings: { targetWins: Number($('target-wins').value), mapId: $('map-choice').value },
+    settings: { targetWins: Number($('target-wins').value), mapId: $('map-choice').value, mode },
   });
   session.inGame = true;
   session.broadcast({ type: 'game-start' });
@@ -237,6 +255,8 @@ $('name').addEventListener('keydown', (e) => {
 });
 
 $('start-btn').addEventListener('click', startHostGame);
+$('mode').addEventListener('change', () => session?.setMode?.($('mode').value));
+$('shuffle-btn').addEventListener('click', () => session?.shuffleTeams?.());
 $('leave-btn').addEventListener('click', () => leave('You left the game.'));
 
 $('copy-btn').addEventListener('click', async () => {

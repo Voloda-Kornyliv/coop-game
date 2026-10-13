@@ -70,3 +70,21 @@ export function mirrorX(r, W) {
 export function mirrorY(r, H) {
   return [r, { ...r, y: H - r.y - r.h }];
 }
+
+// Does the segment (x1,y1)-(x2,y2) cross the rect? (Liang-Barsky clipping.)
+export function segmentHitsRect(x1, y1, x2, y2, r) {
+  const dx = x2 - x1, dy = y2 - y1;
+  let t0 = 0, t1 = 1;
+  const edges = [[-dx, x1 - r.x], [dx, r.x + r.w - x1], [-dy, y1 - r.y], [dy, r.y + r.h - y1]];
+  for (const [p, q] of edges) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return true;
+}
+
+export function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}

@@ -13,7 +13,7 @@
 </head>
 <body>
   <main id="menu">
-    <h1>Blast Party v0.1</h1>
+    <h1>Blast Party v0.2</h1>
 
     <section id="home">
       <label for="name">Your name</label>
@@ -43,6 +43,9 @@
 
       <div id="host-settings" hidden>
         <div class="row settings">
+          <label>Mode
+            <select id="mode"></select>
+          </label>
           <label>First to
             <select id="target-wins"></select>
           </label>
@@ -50,8 +53,10 @@
             <select id="map-choice"></select>
           </label>
         </div>
+        <button id="shuffle-btn" class="small" hidden>🔀 Shuffle teams</button>
         <button id="start-btn" class="primary">Start game</button>
       </div>
+      <p id="mode-info" class="muted"></p>
       <p id="wait-host" class="muted">Waiting for the host to start…</p>
 
       <button id="leave-btn" class="danger">Leave game</button>
@@ -61,7 +66,7 @@
 
     <details class="howto">
       <summary>How to play</summary>
-      <p>Last one standing wins the round. Between rounds everyone picks an upgrade, and they stack. Dead players come back as ghosts who can annoy the living.</p>
+      <p>Last one standing (or last team) wins the round. Smash crates, barrels and turrets for XP: levels give more HP and damage. Between rounds everyone except the winner picks an upgrade, and everything stacks for the whole match. Dead players come back as ghosts who can annoy the living.</p>
       <p><b>Phone</b> (landscape): left thumb moves, right thumb aims and fires. Buttons: ability, dash, pickup.</p>
       <p><b>Laptop</b>: WASD to move, mouse to aim, click to shoot, <kbd>Space</kbd> dash, <kbd>Q</kbd> / right-click ability, <kbd>E</kbd> pickup, <kbd>1</kbd>–<kbd>4</kbd> emotes.</p>
       <p>Tip: a laptop makes the best host.</p>
@@ -79,6 +84,8 @@
       </div>
       <div id="round-info"></div>
       <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text"></span></div>
+      <div id="xp-bar" hidden><div id="xp-fill"></div><span id="xp-text"></span></div>
+      <canvas id="minimap"></canvas>
       <div id="notice" hidden></div>
       <div id="ghost-hint" hidden>👻 You're a ghost: <b>fire</b> to spook, <b>ability</b> to drop a banana</div>
       <div id="killfeed"></div>

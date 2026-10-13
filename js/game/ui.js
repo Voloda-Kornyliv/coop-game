@@ -2,6 +2,7 @@
 // innerHTML, because they come from other people's devices.
 
 import { ACTIVES, PICKUPS, PASSIVES, describeCard } from './abilities.js';
+import { TEAMS, PROGRESSION } from './config.js';
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -49,27 +50,40 @@ export class GameUI {
     const { me, phase } = view;
 
     // Scoreboard
-    const scoreKey = view.players.map((p) => `${p.num}:${p.score}:${p.crown}:${p.alive}:${p.picked}:${p.away}`).join('|') + phase;
+    const teams = view.mode === 'teams';
+    const scoreKey = view.players.map((p) => `${p.num}:${p.score}:${p.crown}:${p.alive}:${p.picked}:${p.away}:${p.team}`).join('|') + phase + view.teamScores.join();
     this.set('scores', scoreKey, () => {
       const box = this.$('#scores');
-      box.replaceChildren(...view.players.map((p) => {
+      const chips = [];
+      if (teams) {
+        TEAMS.names.forEach((n, t) => {
+          const chip = el('div', 'chip team-score', `${n} ${view.teamScores[t]}`);
+          chip.style.background = TEAMS.colors[t];
+          chips.push(chip);
+        });
+      }
+      chips.push(...view.players.map((p) => {
         const info = view.roster.get(p.num);
         const chip = el('div', `chip${p.alive ? '' : ' out'}${p.num === view.myNum ? ' me' : ''}`);
+        if (teams && p.team >= 0) chip.style.boxShadow = `inset 0 0 0 2px ${TEAMS.colors[p.team]}`;
         const dot = el('span', 'dot');
         dot.style.background = info?.color || '#888';
-        chip.append(dot, el('span', 'name', info?.name || '?'), el('b', '', String(p.score)));
+        chip.append(dot, el('span', 'name', info?.name || '?'));
+        if (!teams) chip.append(el('b', '', String(p.score)));
         if (p.crown) chip.append(el('span', '', '👑'));
         if (p.away) chip.append(el('span', '', '📡'));
         if (phase === 'draft' && p.picked) chip.append(el('span', '', '✓'));
         return chip;
       }));
+      box.replaceChildren(...chips);
     });
 
     // Round info
     let info = '';
     if (phase === 'playing' || phase === 'roundEnd') {
       info = `Round ${view.round} · ${view.map.name} · ${fmtTime(view.roundTime)}`;
-      if (view.zone) info += ' · ⚠️ zone closing';
+      if (view.zone?.r) info += ' · ⚠️ zone closing';
+      else if (view.zone?.startsIn > 0) info += ` · zone in ${Math.ceil(view.zone.startsIn)}s`;
     } else if (phase === 'countdown') info = `Round ${view.round} · ${view.map.name}`;
     else if (phase === 'draft') info = 'Draft';
     this.set('info', info, (v) => { this.$('#round-info').textContent = v; });
@@ -80,11 +94,20 @@ export class GameUI {
       const inRound = phase === 'playing' || phase === 'roundEnd' || phase === 'countdown';
       const ghost = me.ghost && inRound;
       this.set('hpVisible', inRound, (v) => { this.$('#hp-bar').hidden = !v; });
-      const hpText = ghost ? '👻 Ghost' : `${me.hp} / ${me.maxHp}`;
-      this.set('hp', `${me.hp}/${me.maxHp}/${ghost}`, () => {
+      const hpText = ghost ? '👻 Ghost' : `${me.hp} / ${me.maxHp}${me.shield > 0 ? ` +${me.shield}🛡` : ''}`;
+      this.set('hp', `${me.hp}/${me.maxHp}/${ghost}/${me.shield}`, () => {
         this.$('#hp-fill').style.width = ghost ? '0%' : `${Math.max(0, (me.hp / me.maxHp) * 100)}%`;
         this.$('#hp-text').textContent = hpText;
       });
+      // XP bar: level, progress and the catch-up multiplier (section 12).
+      const mult = me.leader ? PROGRESSION.leaderXp : me.underdog ? PROGRESSION.underdogXp : 1;
+      const xpText = `Lv ${me.level}${me.level >= PROGRESSION.maxLevel ? ' MAX' : ''}${mult !== 1 ? ` · XP ×${mult}` : ''}`;
+      this.set('xp', `${xpText}|${me.xpProgress}`, () => {
+        this.$('#xp-fill').style.width = `${me.xpProgress * 100}%`;
+        this.$('#xp-text').textContent = xpText;
+      });
+      this.set('xpVisible', inRound || phase === 'draft', (v) => { this.$('#xp-bar').hidden = !v; });
+
       this.set('ghostHint', ghost && phase === 'playing', (v) => {
         this.$('#ghost-hint').hidden = !v;
         document.body.classList.toggle('ghost-mode', v);
@@ -124,18 +147,20 @@ export class GameUI {
 
   // ------------------------------------------------------------ draft
 
-  showOffer(cards) {
-    this.offer = cards;
+  showOffer(cards, skipped = false) {
+    this.offer = cards.length ? cards : null;
+    this.skipped = skipped;
     this.cache.draftKey = null;
   }
 
   updateDraft(view) {
     const me = view.me;
     const waiting = !this.offer || me?.picked;
-    const key = `${waiting}|${this.offer?.join(',')}`;
+    const key = `${waiting}|${this.offer?.join(',')}|${this.skipped}`;
     this.set('draftKey', key, () => {
       const box = this.$('#draft-cards');
-      this.$('#draft-title').textContent = waiting ? 'Waiting for others…' : 'Pick one';
+      this.$('#draft-title').textContent = !waiting ? 'Pick one'
+        : this.skipped ? '🏆 You won the round: no upgrade this time' : 'Waiting for others…';
       if (waiting) {
         box.replaceChildren(this.myBuild(view));
         return;
@@ -176,12 +201,20 @@ export class GameUI {
   showResults(results, view) {
     this.results = results;
     const name = (num) => view.roster.get(num)?.name || '?';
-    this.$('#results-winner').textContent = `🏆 ${name(results.winner)} wins!`;
+    const teams = results.mode === 'teams';
+    const winner = this.$('#results-winner');
+    winner.textContent = teams && results.winnerTeam >= 0
+      ? `🏆 ${TEAMS.names[results.winnerTeam]} TEAM wins! (${results.teamScores.join(' : ')})`
+      : `🏆 ${name(results.winner)} wins!`;
+    winner.style.color = teams && results.winnerTeam >= 0 ? TEAMS.colors[results.winnerTeam] : '';
     this.$('#results-reason').textContent = results.reason || '';
     this.$('#results-reason').hidden = !results.reason;
     this.$('#results-standings').replaceChildren(...results.standings.map((s, i) => {
       const row = el('div', 'standing');
-      row.append(el('span', '', `${i + 1}.`), el('span', 'grow', name(s.num)), el('b', '', String(s.score)));
+      const who = el('span', 'grow', name(s.num));
+      if (teams && s.team >= 0) who.style.color = TEAMS.colors[s.team];
+      row.append(el('span', '', `${i + 1}.`), who, el('span', 'muted-level', `Lv ${s.level}`));
+      if (!teams) row.append(el('b', '', String(s.score)));
       return row;
     }));
     this.$('#results-awards').replaceChildren(...results.awards.map((a) => {

@@ -91,7 +91,8 @@ button.small { padding: 6px 12px; font-size: 14px; align-self: center; }
 
 .row { display: flex; gap: 8px; }
 .row input { flex: 1; min-width: 0; }
-.settings label { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.settings label { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.settings select { min-width: 0; padding: 10px 6px; }
 
 .divider {
   display: flex; align-items: center; gap: 10px;
@@ -215,6 +216,45 @@ body.in-game #menu { display: none; }
 #hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #3ddc84, #a6f07a); transition: width 0.15s; }
 #hp-text { position: absolute; inset: 0; text-align: center; font-size: 12px; line-height: 18px; font-weight: 700; text-shadow: 0 1px 2px #000; }
 
+#xp-bar {
+  position: absolute;
+  left: max(54px, calc(env(safe-area-inset-left) + 46px));
+  top: calc(max(6px, env(safe-area-inset-top)) + 76px);
+  width: 160px; height: 14px;
+  border-radius: 7px;
+  background: var(--hud-bg);
+  overflow: hidden;
+}
+#xp-fill { height: 100%; width: 0; background: linear-gradient(90deg, #4ee6e0, #7dffcf); transition: width 0.2s; }
+#xp-text { position: absolute; inset: 0; text-align: center; font-size: 10px; line-height: 14px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+
+#minimap {
+  position: absolute;
+  right: max(8px, env(safe-area-inset-right));
+  top: calc(max(6px, env(safe-area-inset-top)) + 54px);
+  width: 160px;
+  height: 92px;
+  border-radius: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  background: rgba(13, 15, 20, 0.6);
+  pointer-events: none;
+}
+
+.chip.team-score { color: #fff; font-weight: 800; }
+
+.team-badge {
+  padding: 1px 7px;
+  margin-right: 8px;
+  border: none;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.team-badge:disabled { cursor: default; opacity: 0.9; }
+.muted-level { color: var(--hud-muted); font-size: 13px; margin-right: 8px; }
+
 #ghost-hint {
   position: absolute;
   top: calc(max(6px, env(safe-area-inset-top)) + 80px);
@@ -249,7 +289,7 @@ body.in-game #menu { display: none; }
 #killfeed {
   position: absolute;
   right: max(8px, env(safe-area-inset-right));
-  top: calc(max(6px, env(safe-area-inset-top)) + 54px);
+  top: calc(max(6px, env(safe-area-inset-top)) + 154px);
   display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
   max-width: 45%;
 }
@@ -475,5 +515,7 @@ body.ghost-mode .action:not(#btn-ability):not(#btn-dash) { visibility: hidden; }
   .card { width: 140px; min-height: 120px; padding: 8px; }
   .card-icon { font-size: 26px; }
   .panel { padding: 10px 12px; }
-  #hp-bar { width: 120px; }
+  #hp-bar, #xp-bar { width: 120px; }
+  #minimap { width: 120px; height: 69px; }
+  #killfeed { top: calc(max(6px, env(safe-area-inset-top)) + 128px); }
 }

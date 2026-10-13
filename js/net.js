@@ -69,6 +69,44 @@ export class HostSession extends Emitter {
     this.connToPlayer = new Map();      // connection peer id -> player id
     this.closed = false;
     this.inGame = false;                // longer reconnect window while a game runs
+    this.mode = 'ffa';
+  }
+
+  // ---- teams (section 2): fill alternately, players may switch, host shuffles.
+
+  smallerTeam() {
+    const counts = [0, 0];
+    for (const p of this.players) counts[p.team]++;
+    return counts[1] < counts[0] ? 1 : 0;
+  }
+
+  setMode(mode) {
+    this.mode = mode === 'teams' ? 'teams' : 'ffa';
+    this.broadcastPlayers();
+  }
+
+  setTeam(id, team) {
+    const p = this.players.find((o) => o.id === id);
+    if (!p || (team !== 0 && team !== 1)) return;
+    p.team = team;
+    this.broadcastPlayers();
+  }
+
+  shuffleTeams() {
+    const order = [...this.players].sort(() => Math.random() - 0.5);
+    order.forEach((p, i) => { p.team = i % 2; });
+    this.broadcastPlayers();
+  }
+
+  // Team sizes may differ by at most 1 when the game starts.
+  rebalanceTeams() {
+    for (;;) {
+      const a = this.players.filter((p) => p.team === 0), b = this.players.filter((p) => p.team === 1);
+      if (Math.abs(a.length - b.length) <= 1) break;
+      const big = a.length > b.length ? a : b;
+      big[Math.floor(Math.random() * big.length)].team = a.length > b.length ? 1 : 0;
+    }
+    this.broadcastPlayers();
   }
 
   open(attempt = 0) {
@@ -80,7 +118,7 @@ export class HostSession extends Emitter {
       if (this.id) return;              // signaling reconnect, not a new game
       this.id = id;
       this.code = code;
-      this.players = [{ id, name: this.name, hat: this.hat, isHost: true, away: false }];
+      this.players = [{ id, name: this.name, hat: this.hat, isHost: true, away: false, team: 0 }];
       this.heartbeat = setInterval(() => this.tickHeartbeat(), HEARTBEAT_MS);
       this.emit('open', code);
       this.emit('players', this.players);
@@ -138,6 +176,9 @@ export class HostSession extends Emitter {
         if (p) { p.hat = cleanHat(msg.hat); this.broadcastPlayers(); }
         break;
       }
+      case 'team':
+        if (id && !this.inGame) this.setTeam(id, msg.team);
+        break;
       case 'ping':
         break;
       default:
@@ -168,7 +209,7 @@ export class HostSession extends Emitter {
       setTimeout(() => conn.close(), 500);
       return;
     }
-    const player = { id: conn.peer, name: cleanName(msg.name), hat: cleanHat(msg.hat), isHost: false, away: false };
+    const player = { id: conn.peer, name: cleanName(msg.name), hat: cleanHat(msg.hat), isHost: false, away: false, team: this.smallerTeam() };
     this.guests.set(player.id, { conn, lastSeen: Date.now(), token, away: false, awaySince: 0 });
     this.connToPlayer.set(conn.peer, player.id);
     this.players.push(player);
@@ -229,8 +270,8 @@ export class HostSession extends Emitter {
   }
 
   broadcastPlayers() {
-    this.broadcast({ type: 'players', players: this.players });
-    this.emit('players', this.players);
+    this.broadcast({ type: 'players', players: this.players, mode: this.mode });
+    this.emit('players', this.players, this.mode);
   }
 
   sendRaw(id, data, droppable) {
@@ -351,7 +392,8 @@ export class GuestSession extends Emitter {
       }
       case 'players':
         this.players = Array.isArray(msg.players) ? msg.players : [];
-        this.emit('players', this.players);
+        this.mode = msg.mode === 'teams' ? 'teams' : 'ffa';
+        this.emit('players', this.players, this.mode);
         break;
       case 'rejected':
         this.fail(String(msg.reason || 'Rejected by host.'));
@@ -399,6 +441,10 @@ export class GuestSession extends Emitter {
   setHat(hat) {
     this.hat = hat;
     this.send({ type: 'hat', hat });
+  }
+
+  setTeam(id, team) {
+    this.send({ type: 'team', team });
   }
 
   fail(reason) {

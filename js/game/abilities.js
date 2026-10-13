@@ -3,7 +3,7 @@
 // the simulation loop. Behaviour runs on the host only; clients use the
 // names/icons/descriptions for UI.
 
-import { PLAYER } from './config.js';
+import { PLAYER, PROGRESSION } from './config.js';
 import { pick } from './geometry.js';
 
 const TAU = Math.PI * 2;
@@ -28,6 +28,8 @@ export const VERBS = {
   decoy: ['fooled', 'was fooled'],
   lastlaugh: ['took down', 'went out with a bang'],
   lava: ['yeeted into lava', 'melted in lava'],
+  turret: ['fed to a turret', 'got turreted'],
+  barrel: ['barrel-bombed', 'blew up with a barrel'],
   zone: ['pushed out of the zone', 'got lost in the zone'],
   sheep: ['sheared', 'got sheared'],
   slip: ['caught slipping', 'slipped into oblivion'],
@@ -116,7 +118,7 @@ export const PROJECTILES = {
   },
 
   swapOrb: {
-    speed: 540, r: 13, life: 1.2, dmg: 0, knock: 0,
+    speed: 540, r: 13, life: 1.2, dmg: 0, knock: 0, hitsAllies: true,
     onHit(sim, b, target) {
       const owner = sim.players.get(b.owner);
       if (!owner || !owner.alive) return true;
@@ -129,7 +131,7 @@ export const PROJECTILES = {
   },
 
   hook: {
-    speed: 1050, r: 9, life: 0.45, dmg: 5, knock: 0, reflectable: false,
+    speed: 1050, r: 9, life: 0.45, dmg: 5, knock: 0, reflectable: false, hitsAllies: true,
     onHit(sim, b, target) {
       const owner = sim.players.get(b.owner);
       sim.damage(target, b.dmg, owner, 'bullet');
@@ -155,6 +157,9 @@ export const PROJECTILES = {
   shrinkRay: { speed: 950, r: 9, life: 0.8, dmg: 0, knock: 0, onHit: effectHit('shrink', 4) },
   reverseOrb: { speed: 600, r: 13, life: 1.2, dmg: 0, knock: 0, onHit: effectHit('reverse', 3) },
 
+  // Fired by turrets: no owner, hits everyone, telegraphed and slow.
+  turretShot: { speed: 380, r: 9, life: 1.6, dmg: 12, knock: 150, objects: false },
+
   potato: {
     speed: 540, r: 13, life: 1.0, dmg: 0, knock: 0,
     onHit(sim, b, target) {
@@ -166,7 +171,7 @@ export const PROJECTILES = {
   },
 
   bananaThrow: {
-    speed: 520, r: 11, life: 0.35, dmg: 0, knock: 0,
+    speed: 520, r: 11, life: 0.35, dmg: 0, knock: 0, hitsAllies: true,
     onHit(sim, b, target) {
       sim.slip(target, sim.players.get(b.owner), b.vx, b.vy);
       return true;
@@ -192,9 +197,10 @@ export const PROPS = {
   mine: {
     r: 16, life: 60,
     onTouch(sim, prop, p) {
-      if (prop.owner === p.id || prop.age < 0.8) return;
+      const owner = sim.players.get(prop.owner);
+      if (prop.owner === p.id || prop.age < 0.8 || (owner && !sim.isEnemy(owner, p))) return;
       prop.dead = true;
-      sim.explode(prop.x, prop.y, 115, 45, sim.players.get(prop.owner), 'mine');
+      sim.explode(prop.x, prop.y, 115, 45, owner, 'mine');
     },
   },
   pad: {
@@ -226,8 +232,9 @@ export const PROPS = {
   fart: {
     r: 115, life: 4,
     update(sim, prop, dt) {
+      const owner = sim.players.get(prop.owner);
       for (const p of sim.living()) {
-        if (p.id === prop.owner) continue;
+        if (p.id === prop.owner || (owner && !sim.isEnemy(owner, p))) continue;
         const dx = p.x - prop.x, dy = p.y - prop.y;
         const d = Math.hypot(dx, dy) || 1;
         if (d > prop.r + p.r) continue;
@@ -318,7 +325,7 @@ export const ACTIVES = {
       for (let i = 0; i < 4; i++) {
         let best = null, bestD = range * range;
         for (const o of sim.living()) {
-          if (hit.has(o.id)) continue;
+          if (hit.has(o.id) || !sim.isEnemy(p, o)) continue;
           const d = (o.x - from.x) ** 2 + (o.y - from.y) ** 2;
           if (d < bestD) { best = o; bestD = d; }
         }
@@ -371,7 +378,7 @@ export const ACTIVES = {
   bighead: {
     name: 'Big Head', icon: '🎈', cd: 12, desc: 'Every enemy gets a huge head (and hitbox) for 4 seconds.',
     cast(sim, p) {
-      for (const o of sim.living()) if (o !== p) sim.applyEffect(o, 'bighead', 4, p);
+      for (const o of sim.living()) if (sim.isEnemy(p, o)) sim.applyEffect(o, 'bighead', 4, p);
     },
   },
   shrink: { name: 'Shrink Ray', icon: '🔬', cd: 9, desc: 'Target becomes tiny, fast and fragile for 4 seconds.', cast: shoot('shrinkRay') },
@@ -382,7 +389,7 @@ export const ACTIVES = {
     cast(sim, p) {
       sim.spawnProp('disco', p.x, p.y, p.id);
       for (const o of sim.living()) {
-        if (o !== p && (o.x - p.x) ** 2 + (o.y - p.y) ** 2 < 230 ** 2) sim.applyEffect(o, 'dance', 1.5, p);
+        if (sim.isEnemy(p, o) && (o.x - p.x) ** 2 + (o.y - p.y) ** 2 < 230 ** 2) sim.applyEffect(o, 'dance', 1.5, p);
       }
     },
   },
@@ -408,15 +415,19 @@ export const PASSIVES = {
   dash: { name: 'Dash Master', icon: '🔥', max: 2, desc: 'Half dash cooldown. Dashing leaves a fire trail.' },
   lastlaugh: { name: 'Last Laugh', icon: '💣', max: 3, desc: 'Explode when you die.' },
   pierce: { name: 'Piercing', icon: '📌', max: 2, desc: 'Bullets pass through the first player they hit.' },
-  magnet: { name: 'Magnet', icon: '🧲', max: 2, desc: 'Pickups fly to you and bullets curve toward enemies.' },
+  magnet: { name: 'Magnet', icon: '🧲', max: 2, desc: 'Pickups and XP orbs fly to you from further away, and bullets curve toward enemies.' },
   clock: { name: 'Cooldown Clock', icon: '⏱️', max: 3, desc: 'Ability cooldown -25%.' },
   tiny: { name: 'Tiny', icon: '🐜', max: 2, desc: '25% smaller and harder to hit, -10 max HP.' },
   rage: { name: 'Ricochet Rage', icon: '😤', max: 3, desc: 'Bullets speed up and deal +5 damage after each wall hit.' },
 };
 
-export function computeStats(passives) {
+// Stats come from upgrade stacks plus level (section 7), so there's no hidden
+// mutable state to keep in sync.
+export function computeStats(passives, level = 1) {
   const n = (id) => passives[id] || 0;
+  const lv = Math.max(0, level - 1);
   return {
+    damageMult: 1 + PROGRESSION.damagePerLevel * lv,
     speed: PLAYER.speed * (1 + 0.15 * n('feet')),
     fireInterval: PLAYER.fireInterval / (1 + 0.2 * n('trigger')),
     shots: 1 + n('split'),
@@ -425,7 +436,7 @@ export function computeStats(passives) {
     bounces: n('bouncy'),
     pierce: n('pierce'),
     vampire: 5 * n('vampire'),
-    maxHp: PLAYER.hp + 30 * n('thick') - 10 * n('tiny'),
+    maxHp: PLAYER.hp + 30 * n('thick') - 10 * n('tiny') + PROGRESSION.hpPerLevel * lv,
     radius: (PLAYER.radius + 3 * n('thick')) * 0.75 ** n('tiny'),
     dashCooldown: PLAYER.dashCooldown * 0.5 ** n('dash'),
     fireTrail: n('dash') > 0,
@@ -448,7 +459,7 @@ export const PICKUPS = {
   giant: { name: 'Giant Mode', icon: '🦖', use(sim, p) { p.e.giant = 4; } },
   confusion: {
     name: 'Confusion', icon: '🙃',
-    use(sim, p) { for (const o of sim.living()) if (o !== p) sim.applyEffect(o, 'confused', 3, p); },
+    use(sim, p) { for (const o of sim.living()) if (sim.isEnemy(p, o)) sim.applyEffect(o, 'confused', 3, p); },
   },
   teleport: {
     name: 'Teleport All', icon: '🌪️',

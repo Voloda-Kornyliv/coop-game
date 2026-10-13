@@ -5,6 +5,7 @@ let ctx = null;
 let master = null;
 let noiseBuf = null;
 let enabled = false;
+let volume = 1;                       // per-play scale, set by play()
 const lastPlayed = new Map();
 
 function ensure() {
@@ -34,7 +35,7 @@ function tone(type, f0, f1, dur, vol = 0.2, delay = 0) {
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
   if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
-  env(g, t, 0.005, dur, vol);
+  env(g, t, 0.005, dur, Math.max(0.0002, vol * volume));
   o.connect(g).connect(master);
   o.start(t);
   o.stop(t + dur + 0.05);
@@ -49,7 +50,7 @@ function noise(dur, vol, filterType, freq) {
   f.type = filterType;
   f.frequency.value = freq;
   const g = ctx.createGain();
-  env(g, t, 0.005, dur, vol);
+  env(g, t, 0.005, dur, Math.max(0.0002, vol * volume));
   src.connect(f).connect(g).connect(master);
   src.start(t);
   src.stop(t + dur + 0.05);
@@ -86,6 +87,9 @@ const SOUNDS = {
   go: () => tone('sine', 990, 990, 0.35, 0.25),
   win: () => [523, 659, 784, 1046].forEach((f, i) => tone('triangle', f, f, 0.18, 0.2, i * 0.11)),
   emote: () => tone('sine', 700, 900, 0.08, 0.1),
+  tshot: () => tone('square', 420, 160, 0.12, 0.08),
+  orb: () => tone('sine', 1200 + Math.random() * 300, 1600, 0.06, 0.08),
+  levelup: () => [523, 784, 1046, 1568].forEach((f, i) => tone('triangle', f, f * 1.01, 0.14, 0.18, i * 0.07)),
 };
 
 export const audio = {
@@ -102,11 +106,13 @@ export const audio = {
   },
 
   // minGap stops 8 players' machine-guns from becoming white noise.
-  play(name, minGap = 0.03) {
-    if (!enabled || !ctx || ctx.state !== 'running' || !SOUNDS[name]) return;
+  play(name, minGap = 0.03, vol = 1) {
+    if (!enabled || !ctx || ctx.state !== 'running' || !SOUNDS[name] || vol <= 0.02) return;
     const now = ctx.currentTime;
     if (now - (lastPlayed.get(name) || 0) < minGap) return;
     lastPlayed.set(name, now);
+    volume = vol;
     SOUNDS[name]();
+    volume = 1;
   },
 };
