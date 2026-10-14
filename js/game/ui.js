@@ -1,8 +1,8 @@
 // DOM HUD and overlays. Player names always go through textContent, never
 // innerHTML, because they come from other people's devices.
 
-import { ACTIVES, PICKUPS, PASSIVES, describeCard } from './abilities.js';
-import { TEAMS, PROGRESSION } from './config.js';
+import { ACTIVES, PICKUPS, PASSIVES, SYNERGIES, describeCard } from './abilities.js';
+import { TEAMS, PROGRESSION, SUDDEN_DEATH } from './config.js';
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -29,6 +29,11 @@ export class GameUI {
     this.$('#results-again').addEventListener('click', () => this.h.onPlayAgain(), opts);
     this.$('#results-leave').addEventListener('click', () => this.h.onLeave(true), opts);
     this.$('#results-lobby').addEventListener('click', () => this.h.onLobby(), opts);
+    this.$('#draft-reroll').addEventListener('click', () => {
+      this.canReroll = false;
+      this.cache.draftKey = null;
+      this.h.onReroll();
+    }, opts);
     this.$('#notice').hidden = true;
     this.$('#killfeed').replaceChildren();
     this.$('#draft').hidden = true;
@@ -82,7 +87,8 @@ export class GameUI {
     let info = '';
     if (phase === 'playing' || phase === 'roundEnd') {
       info = `Round ${view.round} · ${view.map.name} · ${fmtTime(view.roundTime)}`;
-      if (view.zone?.r) info += ' · ⚠️ zone closing';
+      if (view.suddenDeath) info += ` · ⚡ SUDDEN DEATH: ${SUDDEN_DEATH.names[view.suddenDeath.idx] || ''}`;
+      else if (view.zone?.r) info += ' · ⚠️ zone closing';
       else if (view.zone?.startsIn > 0) info += ` · zone in ${Math.ceil(view.zone.startsIn)}s`;
     } else if (phase === 'countdown') info = `Round ${view.round} · ${view.map.name}`;
     else if (phase === 'draft') info = 'Draft';
@@ -125,7 +131,7 @@ export class GameUI {
       this.set('dashCd', ghost ? 0 : me.dashCd, (v) => this.$('#btn-dash').style.setProperty('--cd', v));
       this.set('dashIcon', ghost ? '👻' : '💨', (v) => { this.$('#btn-dash .icon').textContent = v; });
 
-      // Ammo (section 6): tap it (or press R) to reload.
+      // Ammo (section 6): reloading is fully automatic.
       const ammoText = ghost || !inRound ? '' : me.reload >= 0 ? '🔄 Reloading…' : `🔫 ${me.ammo}/${me.magazine}`;
       this.set('ammo', `${ammoText}|${me.reload >= 0 ? Math.round(me.reload * 20) : -1}`, () => {
         const btn = this.$('#ammo');
@@ -157,20 +163,23 @@ export class GameUI {
 
   // ------------------------------------------------------------ draft
 
-  showOffer(cards, skipped = false) {
+  showOffer(cards, skipped = false, { reroll = false, title = '' } = {}) {
     this.offer = cards.length ? cards : null;
     this.skipped = skipped;
+    this.canReroll = reroll;
+    this.title = title;
     this.cache.draftKey = null;
   }
 
   updateDraft(view) {
     const me = view.me;
     const waiting = !this.offer || me?.picked;
-    const key = `${waiting}|${this.offer?.join(',')}|${this.skipped}`;
+    const key = `${waiting}|${this.offer?.join(',')}|${this.skipped}|${this.canReroll}`;
     this.set('draftKey', key, () => {
       const box = this.$('#draft-cards');
       this.$('#draft-title').textContent = !waiting ? 'Pick one'
-        : this.skipped ? '🏆 You won the round: no upgrade this time' : 'Waiting for others…';
+        : this.skipped ? `🏆 You won the round! Your title: “${this.title || 'Champion'}”. No upgrade this time.` : 'Waiting for others…';
+      this.$('#draft-reroll').hidden = waiting || !this.canReroll;
       if (waiting) {
         box.replaceChildren(this.myBuild(view));
         return;
@@ -202,6 +211,10 @@ export class GameUI {
     for (const [id, n] of Object.entries(info.passives || {})) {
       const p = PASSIVES[id];
       if (p) wrap.append(el('div', 'build-row', `${p.icon} ${p.name}${n > 1 ? ` ×${n}` : ''}`));
+    }
+    for (const id of info.synergies || []) {
+      const syn = SYNERGIES[id];
+      if (syn) wrap.append(el('div', 'build-row synergy', `${syn.icon} SYNERGY: ${syn.name}`));
     }
     return wrap;
   }

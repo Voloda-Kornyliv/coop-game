@@ -70,6 +70,7 @@ export class HostGame {
   onMessage(peerId, msg) {
     if (msg.type === 'in') this.sim.setInput(peerId, msg);
     else if (msg.type === 'pick') this.sim.handlePick(peerId, String(msg.card));
+    else if (msg.type === 'reroll') this.sim.handleReroll(peerId);
   }
 
   playerJoined(player) {

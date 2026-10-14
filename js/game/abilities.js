@@ -3,7 +3,7 @@
 // the simulation loop. Behaviour runs on the host only; clients use the
 // names/icons/descriptions for UI.
 
-import { PLAYER, PROGRESSION } from './config.js';
+import { PLAYER, PROGRESSION, TEAMS } from './config.js';
 import { pick } from './geometry.js';
 
 const TAU = Math.PI * 2;
@@ -28,6 +28,7 @@ export const VERBS = {
   decoy: ['fooled', 'was fooled'],
   lastlaugh: ['took down', 'went out with a bang'],
   lava: ['yeeted into lava', 'melted in lava'],
+  gift: ['parting-gifted', 'unwrapped their own gift'],
   turret: ['fed to a turret', 'got turreted'],
   barrel: ['barrel-bombed', 'blew up with a barrel'],
   zone: ['pushed out of the zone', 'got lost in the zone'],
@@ -142,15 +143,28 @@ export const PROJECTILES = {
       }
       return true;
     },
-    onWall(sim, b) {
+    onWall(sim, b, hitObject) {
       const owner = sim.players.get(b.owner);
-      if (owner && owner.alive) {
-        const dx = b.x - owner.x, dy = b.y - owner.y;
+      if (!owner || !owner.alive) return true;
+      // Hooking a barrel yanks the barrel to you (section 8A).
+      if (hitObject?.kind === 'barrel') {
+        const dx = owner.x - hitObject.x, dy = owner.y - hitObject.y;
         const d = Math.hypot(dx, dy) || 1;
-        sim.push(owner, dx / d, dy / d, Math.min(1400, d * 2.8), true);
+        sim.shoveObject(hitObject, (dx / d) * Math.min(1100, d * 2.4), (dy / d) * Math.min(1100, d * 2.4));
+        return true;
       }
+      const dx = b.x - owner.x, dy = b.y - owner.y;
+      const d = Math.hypot(dx, dy) || 1;
+      sim.push(owner, dx / d, dy / d, Math.min(1400, d * 2.8), true);
       return true;
     },
+  },
+
+  // PARTING GIFT: the last bullet in the magazine is big and explodes.
+  giftShot: {
+    speed: PLAYER.bulletSpeed, r: PLAYER.bulletRadius * 2, life: PLAYER.bulletLife, dmg: PLAYER.bulletDamage + 15, knock: PLAYER.knockback,
+    onHit(sim, b) { sim.explode(b.x, b.y, 90, b.dmg, sim.players.get(b.owner), 'gift'); return true; },
+    onWall(sim, b) { sim.explode(b.x, b.y, 90, b.dmg, sim.players.get(b.owner), 'gift'); return true; },
   },
 
   sheepOrb: { speed: 600, r: 13, life: 1.2, dmg: 0, knock: 0, onHit: effectHit('sheep', 2) },
@@ -244,9 +258,23 @@ export const PROPS = {
       }
     },
   },
+  // LAST LAUGH: live grenades dropped on death.
+  grenade: {
+    r: 10, life: 1.2,
+    update(sim, prop, dt) {
+      const f = Math.exp(-3 * dt);
+      prop.vx *= f; prop.vy *= f;
+      const nx = prop.x + prop.vx * dt, ny = prop.y + prop.vy * dt;
+      if (sim.isFree(nx, ny, prop.r)) { prop.x = nx; prop.y = ny; } else { prop.vx = 0; prop.vy = 0; }
+    },
+    onExpire(sim, prop) {
+      sim.explode(prop.x, prop.y, 95, prop.dmg || 25, sim.players.get(prop.owner), 'lastlaugh');
+    },
+  },
   fire: {
     r: 15, life: 2,
     update(sim, prop, dt) {
+      sim.burnBushesAt(prop.x, prop.y, prop.r);
       for (const p of sim.living()) {
         if (p.id === prop.owner) continue;
         if ((p.x - prop.x) ** 2 + (p.y - prop.y) ** 2 < (p.r + prop.r) ** 2) {
@@ -410,37 +438,45 @@ export const PASSIVES = {
   big: { name: 'Big Bullets', icon: '🟠', max: 3, desc: 'Bullets are 50% bigger and deal +5 damage.' },
   feet: { name: 'Fast Feet', icon: '👟', max: 3, desc: '+15% movement speed.' },
   trigger: { name: 'Quick Trigger', icon: '🔫', max: 3, desc: '+20% fire rate.' },
-  vampire: { name: 'Vampire', icon: '🧛', max: 3, desc: 'Heal 5 HP whenever you hit someone.' },
+  vampire: { name: 'Vampire', icon: '🧛', max: 3, desc: 'Heal 4 HP whenever you hit an enemy (2 per pellet).' },
   thick: { name: 'Thick Skin', icon: '🛡️', max: 3, desc: '+30 max HP, and you look chunkier.' },
-  dash: { name: 'Dash Master', icon: '🔥', max: 2, desc: 'Half dash cooldown. Dashing leaves a fire trail.' },
-  lastlaugh: { name: 'Last Laugh', icon: '💣', max: 3, desc: 'Explode when you die.' },
-  pierce: { name: 'Piercing', icon: '📌', max: 2, desc: 'Bullets pass through the first player they hit.' },
-  magnet: { name: 'Magnet', icon: '🧲', max: 2, desc: 'Pickups and XP orbs fly to you from further away, and bullets curve toward enemies.' },
+  dash: { name: 'Dash Master', icon: '🔥', max: 2, desc: 'Half dash cooldown. Dashing leaves a fire trail and reloads +1 extra bullet.' },
+  lastlaugh: { name: 'Last Laugh', icon: '💣', max: 3, desc: 'Drop 3 live grenades when you die.' },
+  pierce: { name: 'Piercing', icon: '📌', max: 2, desc: 'Bullets pass through the first player or crate they hit.' },
+  magnet: { name: 'Magnet', icon: '🧲', max: 2, desc: 'Pickups and XP orbs fly to you from further away, and bullets curve slightly toward enemies.' },
   clock: { name: 'Cooldown Clock', icon: '⏱️', max: 3, desc: 'Ability cooldown -25%.' },
   tiny: { name: 'Tiny', icon: '🐜', max: 2, desc: '25% smaller and harder to hit, -10 max HP.' },
-  rage: { name: 'Ricochet Rage', icon: '😤', max: 3, desc: 'Bullets speed up and deal +5 damage after each wall hit.' },
+  rage: { name: 'Ricochet Rage', icon: '😤', max: 3, desc: 'Bullets speed up and deal +6 damage after each wall hit.' },
   mag: { name: 'Extended Mag', icon: '🧰', max: 2, desc: '+4 shots in the magazine.' },
-  hands: { name: 'Fast Hands', icon: '🤹', max: 2, desc: 'Reload 30% faster.' },
+  hands: { name: 'Fast Hands', icon: '🤹', max: 2, desc: 'Auto-reload and trickle-reload are 35% faster.' },
+  gift: { name: 'Parting Gift', icon: '🎁', max: 1, desc: 'The last bullet in your magazine is huge and explodes (+15 damage).' },
 };
 
 // Stats come from upgrade stacks plus level (section 7), so there's no hidden
 // mutable state to keep in sync.
-export function computeStats(passives, level = 1) {
+export function computeStats(passives, level = 1, { teamBuff = false } = {}) {
   const n = (id) => passives[id] || 0;
   const lv = Math.max(0, level - 1);
+  const syn = activeSynergies(passives);
+  // FAST HANDS (35% per stack) and the Underdog Squad buff speed up both reloads.
+  const reloadMult = 0.65 ** n('hands') * (teamBuff ? 1 - TEAMS.oddReloadBonus : 1);
+  const maxHp = (PLAYER.hp + 30 * n('thick') - 10 * n('tiny') + PROGRESSION.hpPerLevel * lv) * (teamBuff ? 1 + TEAMS.oddHpBonus : 1);
   return {
     damageMult: 1 + PROGRESSION.damagePerLevel * lv,
-    speed: PLAYER.speed * (1 + 0.15 * n('feet')),
+    speed: PLAYER.speed * (1 + 0.15 * n('feet')) * (syn.has('mosquito') ? 1.1 : 1),
     fireInterval: PLAYER.fireInterval / (1 + 0.2 * n('trigger')),
     magazine: PLAYER.magazine + 4 * n('mag'),
-    reloadTime: PLAYER.reloadTime * 0.7 ** n('hands'),
+    reloadTime: PLAYER.reloadTime * reloadMult,
+    trickleEvery: PLAYER.trickleEvery * reloadMult,
+    dashReload: PLAYER.dashReload + (n('dash') > 0 ? 1 : 0),
     shots: 1 + n('split'),
     bulletR: PLAYER.bulletRadius * (1 + 0.5 * n('big')),
-    bulletDmg: PLAYER.bulletDamage + 5 * n('big'),
+    // SPLIT SHOT costs 15% damage per bullet per stack.
+    bulletDmg: (PLAYER.bulletDamage + 5 * n('big')) * Math.max(0.55, 1 - 0.15 * n('split')),
     bounces: n('bouncy'),
     pierce: n('pierce'),
-    vampire: 5 * n('vampire'),
-    maxHp: PLAYER.hp + 30 * n('thick') - 10 * n('tiny') + PROGRESSION.hpPerLevel * lv,
+    vampire: n('vampire'),
+    maxHp: Math.round(maxHp),
     radius: (PLAYER.radius + 3 * n('thick')) * 0.75 ** n('tiny'),
     dashCooldown: PLAYER.dashCooldown * 0.5 ** n('dash'),
     fireTrail: n('dash') > 0,
@@ -448,7 +484,26 @@ export function computeStats(passives, level = 1) {
     magnet: n('magnet'),
     cdMult: 0.75 ** n('clock'),
     rage: n('rage'),
+    gift: n('gift') > 0,
+    teamBuff,
+    pinball: syn.has('pinball'),
+    mosquito: syn.has('mosquito'),
+    spray: syn.has('spray'),
+    juggernaut: syn.has('juggernaut'),
   };
+}
+
+// UPGRADE SYNERGIES (section 8B): owning both upgrades of a pair unlocks a bonus.
+export const SYNERGIES = {
+  pinball: { name: 'Pinball Wizard', icon: '🎱', needs: ['bouncy', 'rage'], desc: 'Bullets aim at the nearest enemy after bouncing.' },
+  mosquito: { name: 'Mosquito', icon: '🦟', needs: ['tiny', 'vampire'], desc: '+10% speed, and you buzz near enemies.' },
+  spray: { name: 'Spray & Pray', icon: '🚿', needs: ['split', 'mag'], desc: 'Firing pushes you backwards: jetpack away!' },
+  juggernaut: { name: 'Juggernaut', icon: '🦏', needs: ['thick', 'big'], desc: 'Half knockback, and you crush crates by walking.' },
+};
+export const SYNERGY_IDS = Object.keys(SYNERGIES);
+
+export function activeSynergies(passives) {
+  return new Set(SYNERGY_IDS.filter((id) => SYNERGIES[id].needs.every((p) => (passives[p] || 0) > 0)));
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +524,7 @@ export const PICKUPS = {
     name: 'Teleport All', icon: '🌪️',
     use(sim) {
       for (const o of sim.living()) {
-        const spot = sim.randomFreeSpot(o.r);
+        const spot = sim.randomSafeSpot(o.r);
         sim.teleport(o, spot.x, spot.y);
       }
       sim.event('teleportAll');
@@ -477,7 +532,14 @@ export const PICKUPS = {
   },
   random: {
     name: 'Mystery', icon: '🎲',
-    use(sim, p) { ACTIVES[pick(ACTIVE_IDS)].cast(sim, p); },
+    // Two random abilities at once (section 8C).
+    use(sim, p) {
+      const a = pick(ACTIVE_IDS);
+      let b = pick(ACTIVE_IDS);
+      while (b === a) b = pick(ACTIVE_IDS);
+      ACTIVES[a].cast(sim, p);
+      ACTIVES[b].cast(sim, p);
+    },
   },
 };
 

@@ -1,6 +1,6 @@
 =====================================================================
   BLAST PARTY
-  Game design document, v0.3, 2026-10-13
+  Game design document, v0.4, 2026-10-14
 =====================================================================
 
   A top-down arena shooter for 2-8 friends in the same room. Everyone
@@ -11,6 +11,26 @@
   your character grows stronger over the match through XP, levels and
   stacking upgrades. The aim is to make people laugh, shout and
   immediately want "one more round".
+
+  CHANGES IN v0.4
+    - PURE AUTO-RELOAD: Removed manual reload (R key) so phones and
+      laptops are 100% equal. Guns auto-reload when empty, or trickle-
+      reload one bullet at a time when you stop shooting for 0.8s.
+      Dashing while empty reloads 2 bullets instantly (section 6).
+    - SUDDEN DEATH EVENTS: When the zone closes completely, a chaotic
+      modifier triggers (Mega Knockback, Banana Rain, etc.) so rounds
+      end in laughter instead of slow zone-healing stalemates (section 9).
+    - MATCH POINT "BOSS MODE": A player one win away from taking the
+      match gets a glowing aura and boss music, uniting the room
+      against them (section 12).
+    - GHOST POSSESSION: Ghosts can now hop inside crates and barrels
+      to wiggle them around and scare living players (section 11).
+    - UPGRADE SYNERGIES: Combining specific upgrades unlocks secret
+      bonus effects (section 8B).
+    - BALANCE & ANTI-CAMPING: Bushes burn away when hit by explosions;
+      the Crown holder pulses on the minimap instead of being permanently
+      tracked; odd-numbered teams get a "Short-Handed" buff; resolved
+      all open questions from v0.3 (sections 9, 12, 17).
 
   CHANGES IN v0.3
     - Smoother play on bad internet: game data uses a separate channel
@@ -24,20 +44,9 @@
       instead of a big announcement (section 8C).
 
   CHANGES IN v0.2
-    - Bigger maps. The camera follows your player instead of showing
-      the whole map, and a minimap is added.
-    - XP and levels: destroying things and knocking out players gives
-      XP. Levels raise damage and max HP and last the whole match.
-    - Turrets, explosive barrels, an XP Vault and bushes in every map.
-    - New mode: Team vs Team.
-    - The round winner skips the next upgrade draft.
-    - Much stronger catch-up rules, so a player or team on a winning
-      streak gets slowed down and players who are behind can come back
-      (section 12).
-    - Reconnect rules, matching the current build (section 15).
-    - The open questions are answered (section 17).
-    - Implementation status: what is built and what is planned
-      (section 16).
+    - Bigger maps, following camera, minimap, XP and levels, turrets,
+      barrels, XP Vault, bushes, Team vs Team mode, stronger catch-up
+      rules, reconnect rules, and implementation status.
 
 
 ---------------------------------------------------------------------
@@ -56,7 +65,8 @@
 
   3. PHONE IS A FIRST-CLASS CONTROLLER
      Every feature must work well with two thumbs on a phone. Laptops
-     are supported, but nothing may need a mouse or keyboard.
+     are supported, but nothing may need a mouse or keyboard, and
+     laptop players must never have extra buttons that phones don't.
 
   4. SHORT ROUNDS, NOBODY WAITS LONG
      Rounds last about 60-120 seconds. Eliminated players keep playing
@@ -90,6 +100,9 @@
       "Shuffle teams" button.
     - At START the host's device rebalances the teams so their sizes
       differ by at most 1.
+    - ODD-PLAYER BALANCE ("Underdog Squad"): If teams are uneven (e.g.,
+      2 vs 3), the smaller team gets +25% max HP, +15% reload speed,
+      and their Revive timer is cut in half (1.5s instead of 3s).
     - The round goes to the last team with a living player. A team
       wins the match after the chosen number of round wins (3 / 5 / 7).
     - No friendly fire: damage never hurts your teammates. Chaos
@@ -167,17 +180,19 @@
 
   Minimap (top-right corner, about 120 x 68 px on a phone)
     - Always shows: walls, the zone circle and where it will end up,
-      you, your teammates, turrets that are still alive, and the XP
-      Vault.
+      you, your teammates, turrets that are still alive, the XP Vault,
+      and the Golden Comeback Crate (if spawned).
     - Enemies are NOT shown by default. An enemy appears as a short
       blip for 1 second whenever they shoot.
-    - The crown holder (the leader in free-for-all) is ALWAYS shown on
-      everyone's minimap. Leading makes you hunted (section 12).
+    - CROWN RADAR: The crown holder (the leader in free-for-all)
+      pulses on everyone's minimap for 1.5 seconds every 4 seconds.
+      Leading makes you hunted, but pulsing lets the leader still pull
+      off quick jukes and bush ambushes between pings (section 12).
 
   Off-screen indicators
     - Small arrows at the screen edge point to teammates, the crown
-      holder, and any enemy who hit you in the last 2 seconds. That
-      way you know where a shot came from.
+      holder (during radar pulses), and any enemy who hit you in the
+      last 2 seconds. That way you know where a shot came from.
 
   Phones play in LANDSCAPE. In portrait, the game shows a "rotate your
   phone" screen. Your own character has a white outline and a small
@@ -196,8 +211,7 @@
                   follows the direction you're moving.
     Buttons on the right edge:
       [ABILITY]   your active ability. Tap to cast it in your aim
-                  direction. (Planned: drag from the button to aim it
-                  precisely.)
+                  direction, or drag from the button to aim precisely.
       [DASH]      a short burst of speed with brief invulnerability.
       [PICKUP]    use your single-use item (greyed out when you have
                   none).
@@ -213,8 +227,9 @@
     Space               dash
     Q or right click    ability
     E                   use pickup
-    R                   reload
     1-4                 emotes
+    (Note: No manual reload key. Reloading is 100% automatic across
+    all devices for fairness and simplicity.)
 
   GAMEPAD (planned): twin sticks, triggers to shoot, face buttons for
   abilities, using the browser's Gamepad API.
@@ -229,21 +244,35 @@
 
 
 ---------------------------------------------------------------------
-6. PLAYER BASICS
+6. PLAYER BASICS & AUTO-RELOAD
 ---------------------------------------------------------------------
 
   Health:       100 HP at level 1. Levels (section 7) and upgrades
                 raise it.
   Basic gun:    about 3 shots per second, 20 damage per bullet at
                 level 1.
-  Magazine:     8 shots. When it's empty the gun reloads automatically
-                (1.4 seconds). If you stop shooting for 1 second with a
-                part-empty magazine, it reloads too. On a laptop, R
-                reloads at any time. A ring around your character shows
-                the reload, and the HUD shows your ammo. The Minigun
-                pickup doesn't use ammo.
+  Auto-Reload:  8-shot magazine. There is NO reload button; reloading
+                happens automatically in three intuitive ways:
+                  1. EMPTY RELOAD: When you fire your last bullet, a
+                     1.3-second full reload starts automatically. You
+                     move 10% faster while completely empty so you can
+                     duck behind cover!
+                  2. TRICKLE RELOAD: If you stop shooting for 0.8
+                     seconds with a part-empty magazine, bullets pop
+                     back into your magazine one by one (every 0.2s)
+                     with a satisfying rising "tick-tick-tick" sound.
+                     Firing interrupts the trickle immediately—you
+                     never get stuck in a reload animation when you
+                     still have bullets left.
+                  3. COMBAT ROLL: Dashing while reloading (or with a
+                     part-empty mag) instantly loads 2 bullets into
+                     your gun.
+                Visuals: pips around your character's feet (or a curved
+                bar under your HP) show your ammo, and a spinning ring
+                shows an active empty-reload. The Minigun pickup
+                doesn't use ammo.
   Movement:     responsive, with no inertia (except on ice). Speed is
-                243 units per second (10% slower than v0.2).
+                243 units per second.
   Dash:         about 200 units in 0.15 seconds, with a 2 second
                 cooldown. You can't be hurt or affected while dashing.
   Knockback:    every hit pushes the target back a little. This adds
@@ -267,18 +296,22 @@
   Where XP comes from
     Crate                    10 XP   dropped as orbs
     Explosive barrel         15 XP   dropped as orbs
-    Turret                   40 XP   dropped as orbs
-    XP Vault (1 per map)    120 XP   dropped as orbs
+    Turret                   40 XP   20 XP straight to killer, 20 XP as orbs
+    XP Vault (1 per map)    120 XP   40 XP straight to breaker, 80 XP as orbs
     Knocking out a player    60 XP   given straight to whoever got the KO
     KO on the crown holder  +40 XP   bonus on top (section 12)
+    First Blood             +25 XP   bonus for the first KO of a round
 
-  XP ORBS
-    - Destroyed objects burst into glowing orbs that anyone can grab.
-      Whoever destroys a turret has to fight for the reward, which
-      creates hot spots on the map.
+  XP ORBS & DECAY
+    - Destroyed objects burst into glowing orbs. Giving part of the
+      Turret/Vault XP straight to the breaker rewards the risk of
+      shooting it, while the dropped orbs still cause a scramble.
     - Orbs fly to you when you're within 80 units (more with the
       MAGNET upgrade).
-    - Orbs stay until the round ends.
+    - ORB DECAY: Orbs stay on the ground for 20 seconds. After 10
+      seconds they start blinking and shrink to 50% value, vanishing
+      at 20s. This stops players from camping near orb piles and pushes
+      fast-paced collection.
 
   Level curve
     - Going from level N to N+1 costs 60 + 40 x N XP:
@@ -290,8 +323,8 @@
   What each level gives
     +12 max HP
     +6% damage (bullets AND abilities)
-    Levelling up also heals 25 HP, shows a "LEVEL UP!" burst, and
-    plays a sound everyone hears.
+    Levelling up also heals 25 HP, triggers a small knockback wave
+    around you, shows a "LEVEL UP!" burst, and plays a sound.
 
   At level 10 that adds up to +108 max HP and +54% damage, before
   upgrades.
@@ -329,10 +362,13 @@
       upgrade and a 25% chance of being a different active ability.
     - How many cards you're offered depends on the score:
         Round winner (or the whole winning team)   0 cards
-                                                   (skips the draft)
+                                                   (skips the draft, but
+                                                   gets a silly cosmetic
+                                                   title for the round!)
         Match leader, if they didn't win the round 2 cards
         Everyone else                              3 cards
-        Fewest round wins (if not tied with all)   4 cards
+        Fewest round wins (if not tied with all)   4 cards (and 1 free
+                                                   "Reroll" button)
     - While others pick, the winner (and anyone who has already
       picked) sees "Waiting for others…" with their current build.
 
@@ -342,7 +378,7 @@
     BLINK         Short teleport in the aim direction.
     SWAP          Fire a slow orb. Whoever it hits swaps places with you.
     GRAPPLE       A hook that flies you to a wall, or yanks a player to
-                  you.
+                  you (works on Explosive Barrels too!).
     BOUNCE PAD    Drop a pad. Anyone who steps on it (you included) is
                   launched across the map.
 
@@ -366,11 +402,12 @@
 
   Chaos (the funny ones)
     BANANA        Throw a banana peel. Anyone who steps on it slides
-                  helplessly, spinning around.
+                  helplessly, spinning around and firing their gun in
+                  random directions without using ammo.
     SHEEPIFY      Turns the target into a sheep for 2 seconds: no
-                  shooting, only "baa".
-    BIG HEAD      Every enemy gets a huge head (a bigger hitbox) for
-                  4 seconds.
+                  shooting, only "baa", +20% movement speed to flee.
+    BIG HEAD      Every enemy gets a huge head (a bigger hitbox) and
+                  squeaky high-pitched sound effects for 4 seconds.
     SHRINK RAY    The target becomes tiny, fast and fragile for
                   4 seconds.
     REVERSE       The target's movement controls are reversed for
@@ -383,24 +420,42 @@
   --- 8B. PASSIVE UPGRADES (stack all match) ---------------------------
 
     BOUNCY BULLETS     Bullets bounce off walls (+1 bounce per stack).
-    SPLIT SHOT         +1 bullet per shot, fired in a spread.
+    SPLIT SHOT         +1 bullet per shot, fired in a spread (-15% damage
+                       per individual bullet so point-blank hits aren't
+                       instant kills).
     BIG BULLETS        Bullets are 50% larger and deal +5 damage.
     FAST FEET          +15% movement speed.
     QUICK TRIGGER      +20% fire rate.
-    VAMPIRE            Heal 5 HP whenever you hit someone.
+    VAMPIRE            Heal 4 HP whenever you hit an enemy player (2 HP
+                       per pellet for Split Shot / Shotgun).
     THICK SKIN         +30 max HP, and you look chunkier.
     DASH MASTER        Half the dash cooldown. Dashing leaves a fire
-                       trail.
-    LAST LAUGH         Explode when you die.
-    PIERCING           Bullets pass through the first player they hit.
+                       trail and reloads +1 extra bullet.
+    LAST LAUGH         Drop 3 live grenades when you die.
+    PIERCING           Bullets pass through the first player/crate they hit.
     MAGNET             Pickups and XP orbs fly to you from further away,
-                       and your bullets curve toward enemies.
+                       and your bullets curve slightly toward enemies.
     COOLDOWN CLOCK     Ability cooldown -25%.
     TINY               25% smaller and harder to hit, -10 max HP.
-    RICOCHET RAGE      Bullets speed up and deal +5 damage after each
+    RICOCHET RAGE      Bullets speed up and deal +6 damage after each
                        wall hit.
     EXTENDED MAG       +4 shots in the magazine.
-    FAST HANDS         Reload 30% faster.
+    FAST HANDS         Auto-reload and trickle-reload are 35% faster.
+    PARTING GIFT (new) The last bullet in your magazine is 2x size,
+                       explodes on impact, and deals +15 damage.
+
+    UPGRADE SYNERGIES (Bonus fun when you collect specific pairs!)
+      When a player drafts both upgrades in a pair, a golden "SYNERGY!"
+      banner pops up and activates a free bonus effect:
+      - PINBALL WIZARD (Bouncy Bullets + Ricochet Rage): Bullets auto-aim
+        toward the nearest enemy after bouncing off a wall.
+      - MOSQUITO (Tiny + Vampire): +10% movement speed and your character
+        makes an annoying buzzing sound when near enemies.
+      - SPRAY & PRAY (Split Shot + Extended Mag): Firing pushes you
+        backwards slightly, letting you "jetpack" away while shooting.
+      - JUGGERNAUT (Thick Skin + Big Bullets): Knockback against you is
+        reduced by 50%, and you crush Wooden Crates just by walking
+        through them.
 
   Each upgrade has a maximum number of stacks (2-3), so builds can't
   go completely out of control.
@@ -408,14 +463,14 @@
   --- 8C. MAP PICKUPS (single use) -------------------------------------
 
     MEDKIT        Restore 40 HP.
-    MINIGUN       5 seconds of very fast fire.
-    LANDMINE      Place a mine that only you can see.
-    SPEED BOOTS   Much faster for 4 seconds.
-    GIANT MODE    Grow huge for 4 seconds: push others around and take
-                  half damage.
+    MINIGUN       5 seconds of very fast fire with zero ammo cost.
+    LANDMINE      Place a mine that turns invisible after 1.5 seconds.
+    SPEED BOOTS   Much faster for 4 seconds, leaving lightning sparks.
+    GIANT MODE    Grow huge for 4 seconds: push others around, crush
+                  crates on contact, and take half damage.
     CONFUSION     Every enemy's screen flips upside down for 3 seconds.
-    TELEPORT ALL  Every living player moves to a random spot.
-    MYSTERY       Casts a random active ability once.
+    TELEPORT ALL  Every living player moves to a random safe spot.
+    MYSTERY       Casts 2 random active abilities at the same time.
 
   You can't see what's inside a box until you grab it. Boxes spawn over
   time and sometimes drop from crates.
@@ -426,7 +481,7 @@
 
 
 ---------------------------------------------------------------------
-9. ARENA OBJECTS
+9. ARENA OBJECTS & SUDDEN DEATH
 ---------------------------------------------------------------------
 
   Bigger maps are filled with things to smash, avoid and fight over.
@@ -439,8 +494,9 @@
   EXPLOSIVE BARRELS
     Red barrels with 40 HP. When destroyed they explode (radius 140,
     40 damage), can set off other barrels nearby, and drop 15 XP.
-    Shooting a barrel next to an enemy is the classic move. There are
-    6-10 per map.
+    Shooting a barrel takes 2 hits, OR 1 hit makes it hiss and burn
+    for 1.5s before exploding—giving players a hilarious panic moment
+    to dash away or grapple-throw it! There are 6-10 per map.
 
   TURRETS (small and destructible)
     - Stationary guns, 4-8 per map. They shoot at the nearest living
@@ -450,36 +506,46 @@
     - Turret HP:      120 + 30 per round already played.
       Shot damage:    12 + 3 per round already played.
       They fire one shot every 1.2 seconds.
-    - Destroyed turrets drop 40 XP of orbs and have a 30% chance to
-      drop a pickup box. They don't come back until the next round.
-    - Turrets are neutral and shoot everyone. Luring an enemy into a
-      turret's range is a valid tactic. A turret KO is credited to
+    - Destroyed turrets give 20 XP directly to the destroyer, drop 20 XP
+      of orbs, and have a 30% chance to drop a pickup box. They don't
+      come back until the next round.
+    - Turrets are neutral and shoot everyone. A turret KO is credited to
       whoever hit the victim in the last 4 seconds; otherwise the
       victim "got turreted".
 
   XP VAULT (one per map)
     A big armoured chest near the middle of the map, with 400 HP and
-    usually guarded by 2 turrets. It drops 120 XP of orbs. It gives
-    every round a contested centre to fight over.
+    usually guarded by 2 turrets. It gives 40 XP to whoever lands the
+    final blow and drops 80 XP of orbs. It gives every round a
+    contested centre to fight over.
 
-  BUSHES (tall grass)
+  BUSHES (tall grass — now flammable!)
     - Players standing in a bush are hidden from enemies unless the
       enemy is within 120 units.
     - Shooting or getting hit reveals you for 1 second.
-    - Teammates always see each other.
-    - Bushes block sight but not bullets or movement.
+    - ANTI-CAMPING: Explosions (Barrels, Rockets, Parting Gift, Dash
+      Master fire trail) burn bushes down for the rest of the round!
+      If someone is hiding, blow up their cover.
 
   HAZARDS (depend on the map)
     Lava pools, ice, conveyor belts, bumpers and darkness (section 10).
     Lava and the zone do damage as a % of max HP, so they stay
     dangerous in the last rounds when everyone has lots of HP.
 
-  SHRINKING ZONE
+  SHRINKING ZONE & SUDDEN DEATH MAYHEM
     - Starts closing after 40 seconds (25 seconds with 2-3 players) and
-      shrinks over 50 seconds to a small final circle.
+      shrinks over 45 seconds to a small final circle (radius 220).
     - Where the final circle ends up is random, but it is shown on the
       minimap from the start of the round.
     - Outside the zone you lose 8% of your max HP per second.
+    - SUDDEN DEATH MAYHEM: Once the zone finishes shrinking to the final
+      circle, if more than 1 player/team is still alive after 5 seconds,
+      "⚡ SUDDEN DEATH! ⚡" flashes and one random mayhem event starts:
+        * BANANA STORM: Bananas rain from the sky every second.
+        * ZERO GRAVITY: Knockback from all bullets and hits is 400%.
+        * METEOR SHOWER: Explosive barrels parachute into the circle.
+        * HYPER SPEED: Everyone gets +50% movement speed and infinite ammo.
+      After 15 seconds of Sudden Death, the circle shrinks to nothing.
 
 
 ---------------------------------------------------------------------
@@ -492,7 +558,7 @@
 
   Every map has plenty of walls: cover to hide behind, corridors and
   corners to fight around. Open areas without any walls are kept small,
-  so you can always find cover to reload behind.
+  so you can always find cover while your gun auto-reloads.
 
     BACKYARD      2800 x 1600   The starter map. Hedges (bushes), garden
                                 sheds (walls), lots of crates, BBQ
@@ -510,10 +576,10 @@
                                 pushing people into the lava is very
                                 satisfying.
 
-    FACTORY       3200 x 1800   (replaces Conveyor) A network of
-                                conveyor belts that reverse direction
-                                every 8 seconds. Crates riding on the
-                                belts become moving cover. 6 turrets.
+    FACTORY       3200 x 1800   A network of conveyor belts that reverse
+                                direction every 8 seconds. Crates and
+                                barrels riding on the belts become
+                                moving cover (and moving bombs). 6 turrets.
 
     PINBALL       2800 x 1600   Bumpers bounce players and bullets.
                                 Bonus lanes are lined with crates. The
@@ -521,15 +587,14 @@
                                 orbs.
 
     DARK HOUSE    2800 x 1600   Rooms and corridors. You only see a
-                                circle around yourself. Muzzle flashes
-                                and explosions light things up. 4
-                                turrets with flashlights show their
-                                aim.
+                                circle around yourself. Muzzle flashes,
+                                burning bushes and explosions light
+                                things up. 4 turrets with flashlights.
 
-    JUNGLE RUINS  3200 x 1800   (new) Mostly bushes, with crumbling
-                                ruin walls. The temple in the middle
-                                holds the Vault, guarded by 2 turrets.
-                                The map for ambushes.
+    JUNGLE RUINS  3200 x 1800   Mostly bushes, with crumbling ruin
+                                walls. The temple in the middle holds
+                                the Vault, guarded by 2 turrets.
+                                Bring explosives to clear the grass!
 
 
 ---------------------------------------------------------------------
@@ -538,17 +603,23 @@
 
   Eliminated players keep playing as ghosts until the round ends.
     - Ghosts float through walls, can't be hurt and get a wider camera
-      view.
-    - Ghosts can't do damage, but every 6 seconds a ghost can:
-        * spook (fire / dash button): push nearby living players away,
-          or
-        * drop a banana peel (ability button).
-    - Planned: ghosts can pick up and throw crates.
+      view (1.5x).
+    - Ghosts can't do direct damage, but every 6 seconds a ghost can:
+        * SPOOK (shoot button): emit a "BOO!" shockwave that pushes
+          nearby living players and XP orbs slightly away, OR
+        * DROP BANANA (ability button): leave a phantom banana peel
+          that lasts for 8 seconds.
+    - PROP POSSESSION (New!): A ghost can float into any unbroken Crate
+      or Explosive Barrel to "possess" it. While inside, the ghost can
+      slowly scoot the object around (at 30% player speed) or make it
+      wobble to freak out living players! Getting shot breaks the crate
+      and pops the ghost back out.
     - Ghosts are see-through, so they never block the view.
     - In team mode, a ghost can float to a teammate to get revived
       (section 2).
-    - Ghosts can never decide a round on their own. They annoy, and the
-      living still have to finish each other off.
+    - Ghosts can never decide a round on their own. When only 2 living
+      players remain (1v1), ghost cooldowns increase from 6s to 10s so
+      the final duel stays fair.
 
 
 ---------------------------------------------------------------------
@@ -569,24 +640,35 @@
 
   LEADER RULES ("being hunted")
     1. NO DRAFT: the round winner skips the next upgrade draft.
-    2. CROWN: the match leader wears a crown, is always visible on
-       everyone's minimap, and has an arrow pointing to them at every
-       enemy's screen edge.
-    3. BOUNTY: knocking out the crown holder gives +40 XP and heals the
-       attacker 30 HP. The bounty grows +20 XP for each round the leader
-       has won in a row.
-    4. SLOWER XP: the leader earns 0.6x XP.
+    2. CROWN & PULSING RADAR: the match leader wears a crown and pulses
+       on everyone's minimap (and screen-edge arrows) for 1.5s every 4
+       seconds.
+    3. BOUNTY: knocking out the crown holder gives +40 XP, heals the
+       attacker 30 HP, and drops a free Pickup Box. The bounty grows
+       +20 XP for each round the leader has won in a row.
+    4. SLOWER XP: the leader earns 0.7x XP (tuned up slightly from 0.6x
+       so smashing crates still feels rewarding).
+    5. MATCH POINT "BOSS MODE": When a player (or team) is 1 win away
+       from winning the match, the round starts with a siren:
+       "⚠️ ALEX IS ON MATCH POINT! STOP THEM! ⚠️". They grow 15% larger,
+       glow with golden fire, and their bounty is doubled. It creates
+       an unforgettable "everyone team up on the boss" moment.
 
   UNDERDOG RULES ("comeback")
-    5. MORE CARDS: the player(s) with the fewest wins get 4 draft
-       cards instead of 3.
-    6. MORE XP: the player(s) with the fewest wins earn 1.5x XP.
-    7. LEVEL CATCH-UP: at the start of each round, anyone more than 2
+    6. MORE CARDS & REROLL: the player(s) with the fewest wins get 4
+       draft cards instead of 3, plus a 1-use "Reroll" button per draft.
+    7. MORE XP: the player(s) with the fewest wins earn 1.5x XP.
+    8. LEVEL CATCH-UP: at the start of each round, anyone more than 2
        levels below the highest-level player is raised to (highest
        level - 2). Nobody falls hopelessly behind.
-    8. UNDERDOG SHIELD: the player(s) with the fewest wins start each
-       round with a 25 HP shield. It's shown as a blue outline and
-       absorbs damage first.
+    9. UNDERDOG SHIELD: the player(s) with the fewest wins start each
+       round with a 25 HP shield (blue outline, absorbs damage first).
+   10. THE GOLDEN SUPPLY DROP: Starting from Round 3, a Golden "?" Box
+       parachutes into the map at 20 seconds (shown on the minimap). It
+       contains an Overcharged Pickup (e.g., Dual Miniguns, Mega Giant
+       Mode, or a Full Heal + Shield). Underdogs open it instantly on
+       touch; the match leader takes 2.5 seconds of standing on it to
+       unlock it.
 
   Everyone else earns 1.0x XP and gets 3 cards. In team mode all of
   these rules apply per team, using team scores.
@@ -600,45 +682,36 @@
       Mid match          5         150-200           25-30
       Final rounds      8-10       220-350           35-45
 
-    Upgrades (THICK SKIN, BIG BULLETS, ...) make each build different.
-    Levels keep the general power level rising. Hazards and the zone do
-    %-based damage and turret strength grows each round, so late rounds
-    still end on time.
-
   All of these numbers live in one config file (config.js) so they can
-  be tuned after playtests. Things to watch in playtests:
-    - How many rounds in a row does the leader win? Fewer than 2 on
-      average is the target.
-    - How long does a round last? 60-120 seconds is the target.
-    - How often does the player in last place win a round? It should
-      happen regularly.
+  be tuned after playtests.
 
 
 ---------------------------------------------------------------------
 13. PARTY FEATURES (playing in the same room)
 ---------------------------------------------------------------------
 
-  - Big, readable announcements: "3-2-1-GO!", "KO!", "DOUBLE KO!",
-    "REVENGE!", "LEVEL UP!", "YOU WIN THE ROUND!".
+  - Big, readable announcements: "3-2-1-GO!", "FIRST BLOOD!", "KO!",
+    "DOUBLE KO!", "REVENGE!", "LEVEL UP!", "MATCH POINT!", "SUDDEN DEATH!".
   - A funny kill feed with a verb for each way to go out: "zapped",
     "bananaed", "sheeped", "yeeted into lava", "potatoed", "got
-    turreted"...
+    turreted", "parting-gifted"...
   - Emotes: 4 emoji buttons (or keys 1-4) show a bubble above your
     character, in game and as a ghost.
   - Every player picks a hat in the lobby. Player colours are assigned
     automatically and are always different.
   - REVENGE: whoever knocked you out last is marked with a red ring on
-    your screen. Getting them back shows "REVENGE!".
+    your screen. Getting them back shows "REVENGE!" and gives +15 XP.
   - End-of-match awards, so everyone gets a moment:
       Champion            the most round wins
       Sharpshooter        the most KOs
       Banana King         the most enemies slipped
       Kamikaze            the most self-KOs
-      Ghost of the Match  the most ghostly annoyances
+      Ghost of the Match  the most ghostly annoyances & possessions
       Pacifist            the least damage dealt
       Unlucky             took the most damage
-      Demolition          the most objects destroyed       (new)
-      Turret Tamer        the most turrets destroyed       (new)
+      Demolition          the most objects destroyed
+      Turret Tamer        the most turrets destroyed
+      Kingslayer          the most Crown Holder KOs        (new)
       Team MVP            the best player on the winning team (Teams)
   - Strong game feel: screen shake, hit sparks, knockback, confetti on
     KO, short slow motion on the final KO of a round.
@@ -650,19 +723,21 @@
 
   Visuals
     - Simple flat shapes drawn on an HTML canvas: round blob characters
-      with eyes, bright player colours and a dark floor so bullets
-      stand out.
+      with expressive eyes (eyes squint when shooting, go wide when
+      near an explosion, turn into X_X on KO), bright player colours
+      and a dark floor so bullets stand out.
     - Bullets take the shooter's colour, so you can tell who is
-      shooting at you. Turret bullets are white with a red glow.
+      shooting at you. The final bullet in a magazine glows bright yellow
+      and is slightly larger so everyone can see an empty-reload coming.
     - Emoji are used for hats, items and effects (🍌 🐑 🥔 👑).
     - There are no image files. Everything is drawn in code, so it
       stays light and loads quickly on phones.
     - With the camera, only what's on screen is drawn.
 
   Audio
-    - Short sound effects (pew, boing, baa, fart, boom, level-up)
-      generated in the browser with the Web Audio API, so no audio
-      files are needed.
+    - Short sound effects (pew, boing, baa, fart, boom, level-up, rising
+      pitch ticks for trickle-reloading) generated in the browser with
+      the Web Audio API, so no audio files are needed.
     - Phones only allow sound after a tap; the first tap unlocks audio.
     - The mute button is in the corner. Sound is on by default on
       laptops (the "room speakers") and off on phones. The choice is
@@ -683,24 +758,22 @@
 
   VERSION NUMBER
     - The home screen title in index.html shows the version:
-      <h1>Blast Party v0.2</h1>.
-    - EVERY COMMIT increases it by one (v0.2 -> v0.3 -> v0.4 ...), so
+      <h1>Blast Party v0.4</h1>.
+    - EVERY COMMIT increases it by one (v0.3 -> v0.4 -> v0.5 ...), so
       everyone can check they have the latest build after a deploy.
     - The title is the ONLY place the version is written. A small
       script in index.html reads it and loads every code file with the
-      version attached (js/main.js?v0.3, ...), so after a deploy no
-      browser keeps running old cached code. GitHub Pages lets
-      browsers cache files for 10 minutes, and phones can mix old and
-      new files without this.
+      version attached (js/main.js?v0.4, ...), so after a deploy no
+      browser keeps running old cached code.
     - VERSION CHECK: when joining, the guest sends its version and the
       host its own. If they differ, joining stops with a clear message
-      ("Version mismatch: host has v0.3, you have v0.2. Reload the
+      ("Version mismatch: host has v0.4, you have v0.3. Reload the
       page.") instead of a broken or blank game screen.
 
   The host runs the game (host-authoritative)
     - The HOST device runs the only real simulation, at 60 steps per
-      second: movement, bullets, hits, abilities, XP, turrets and
-      rounds.
+      second: movement, bullets, auto-reloads, hits, abilities, XP,
+      turrets and rounds.
     - Every device, including the host's own:
         1. sends its input to the host about 30 times per second.
            Button presses are sent as counters, so a press is never
@@ -708,158 +781,108 @@
         2. draws the world from the snapshots the host sends back,
            30 per second.
     - Devices draw other players slightly in the past and smoothly
-      interpolate between snapshots. The delay adapts to the connection:
-      about 70 ms on good Wi-Fi, up to about 200 ms on a bad connection.
-      If snapshots stop for a moment, things keep moving briefly
-      (extrapolation) instead of freezing.
-    - YOUR OWN character is predicted: it moves the moment you press,
-      and is corrected smoothly toward where the host says you are. Your
-      aim is also drawn from your local input immediately.
-    - The host checks everything other players send before using it.
+      interpolate between snapshots (70 ms on good Wi-Fi, up to 200 ms
+      on a bad connection), with brief extrapolation if packets drop.
+    - YOUR OWN character is predicted: movement, dash, and ammo trickle/
+      auto-reload UI update immediately on your screen and reconcile
+      smoothly with the host.
 
-  Bad connections (v0.3)
-    - Each guest has TWO channels to the host:
-        * a reliable, ordered one for things that must arrive (lobby,
-          draft cards, picks, results, roster), and
-        * a fast, UNORDERED one for snapshots and input. A lost packet
-          never holds up the newer ones behind it, which is what used
-          to freeze the game on bad internet. Old or out-of-order
-          messages are simply ignored (inputs carry a sequence number).
-    - The host skips snapshots to a player whose connection is backed
-      up, so delay never builds up.
-    - Ping indicator in the HUD (top right, next to the sound button):
-      green under 80 ms, yellow under 200 ms, red above.
+  Bad connections
+    - Two WebRTC channels per guest: reliable/ordered for lobby, draft,
+      and results; fast/unordered for snapshots and inputs.
+    - Ping indicator in the HUD (green <80 ms, yellow <200 ms, red >200 ms).
 
   Bigger maps and the camera
-    - The host sends each player only what's near them (their view plus
-      a margin), plus the small minimap data: zone, turrets, crown
-      holder and blips. This keeps snapshots small even on big maps,
-      and stops anyone from seeing hidden enemies (in bushes or the
-      dark) by reading network data.
-    - Maps are still plain data (walls, crates, barrels, turrets,
-      bushes, hazards, spawns) and are mirrored for fairness.
+    - Area-of-interest culling: the host sends each player only what's
+      near their camera view plus minimap data (zone, turrets, pulsing
+      crown radar, golden crate, and shooting blips).
 
-  Disconnects and reconnects (already built)
-    - Errors from the PeerJS server never kick a player once they've
-      joined, because the game connection is direct.
-    - If the connection to the host drops, the player sees "📡
-      Reconnecting…" and their device retries for up to 60 seconds.
-    - The host keeps the player's slot (score, upgrades, XP) for 60
-      seconds during a game, or 15 seconds in the lobby.
-    - While someone reconnects, the round PAUSES for everyone ("⏸
-      Waiting for Bob to reconnect…") for up to 10 seconds. After that
-      the round continues with their character frozen in place.
-    - Reloading the page or reopening the invite link and pressing Join
-      brings you back as the SAME player. A random token per browser
-      tab identifies you.
-    - Only the ✕ / Leave buttons count as leaving on purpose.
-    - If everyone else leaves for good, the match ends with "Everyone
-      else left" and the host can go back to the lobby.
-    - If the host leaves, the game ends for everyone. Handing the game
-      to another player is out of scope.
-
-  File structure (current)
-    index.html, style.css
-    js/main.js            menu, lobby, starting and stopping the game
-    js/net.js             PeerJS sessions, heartbeats, reconnecting
-    js/game/config.js     every gameplay number (tune balance here)
-    js/game/abilities.js  abilities, upgrades, pickups, projectiles,
-                          props
-    js/game/maps.js       map layouts
-    js/game/sim.js        the simulation (host only, no DOM)
-    js/game/protocol.js   snapshot and input wire format
-    js/game/host.js       fixed-step loop on the host
-    js/game/client.js     input, interpolation, events to effects
-    js/game/render.js     canvas drawing (gets the camera in v0.2)
-    js/game/input.js      touch joysticks, keyboard and mouse
-    js/game/ui.js         HUD, draft, results
-    js/game/audio.js      synthesized sound effects
-  New in v0.2: objects.js (turrets, barrels, vault, XP orbs) and
-  progression.js (XP, levels, catch-up rules), both as data plus small
-  behaviour functions, like abilities.js.
+  Disconnects and reconnects
+    - Up to 60s auto-reconnect with slot preservation and a 10s game
+      pause ("⏸ Waiting for Bob to reconnect…").
 
 
 ---------------------------------------------------------------------
 16. IMPLEMENTATION STATUS AND BUILD PLAN
 ---------------------------------------------------------------------
 
-  BUILT (current build, v0.2)
-    [x] Lobby with code / invite link, hats, host settings
-    [x] Full match loop: draft, countdown, rounds, results, awards
-    [x] All 24 active abilities, 14 upgrades, 8 pickups
-    [x] Ghosts (spook + banana), shrinking zone, crown, revenge
-    [x] Touch twin-stick + laptop controls, sound effects, vibration,
-        fullscreen, keep screen awake
-    [x] Reconnect with pause, slot kept, rejoin after reload, end match
-        when alone, back to lobby
-    [x] M7 "BIG WORLD": following camera with the fair view size,
-        look-ahead, edge clamping and a wider ghost view; minimap;
-        off-screen arrows; all 7 maps at the new size; each player is
-        sent only what's near them; version in the home screen title
-    [x] M8 "LEVEL UP": XP orbs, levels (HP + damage), level badges, XP
-        bar, explosive barrels, turrets, XP Vault, bushes, hazard
-        damage as % of max HP
-    [x] M9 "BALANCE": winner skips the draft, leader rules (2 cards,
-        0.6x XP, growing bounty, always on the minimap) and underdog
-        rules (4 cards, 1.5x XP, level catch-up, 25 HP shield)
-    [x] M10 "TEAMS": Team vs Team with lobby team picker, shuffle and
-        rebalance, no friendly fire, team rings and names, teammates on
-        the minimap and edge arrows, revive, team scoring and catch-up,
-        Team MVP award
-    [x] From M11: the Jungle Ruins and Factory maps (moving crates on
-        belts), the Demolition and Turret Tamer awards
-    [x] v0.3: fast unordered channel, own-movement prediction, adaptive
-        interpolation + extrapolation, ping indicator, magazine and
-        reload, EXTENDED MAG / FAST HANDS, slower movement, more walls,
-        pickup notifications
+  BUILT (through v0.3)
+    [x] Lobby, full match loop, 24 active abilities, 16 upgrades, 8 pickups
+    [x] Ghosts, shrinking zone, crown, revenge, touch + laptop controls
+    [x] Reconnect with pause, slot kept, rejoin after reload
+    [x] M7 "BIG WORLD": camera, minimap, off-screen arrows, 7 maps
+    [x] M8 "LEVEL UP": XP orbs, levels, barrels, turrets, Vault, bushes
+    [x] M9 "BALANCE": catch-up rules, leader rules, underdog shield
+    [x] M10 "TEAMS": Red vs Blue, revive, team scoring, Team MVP award
+    [x] v0.3: Dual channels, client prediction, magazine & reload, more walls
 
-  Implementation notes (details decided while building v0.2)
-    - Turrets need a clear line of sight past walls (crates and bushes
-      don't block it, but the bush hiding rule applies to turrets too).
-    - The final zone centre is random within the middle 40% of the map;
-      the final circle has a radius of 220 units.
-    - Pickup boxes spawn every 8 seconds, at most 5 at a time.
-    - Ghosts follow the same bush rule as living players.
-    - Guests can switch teams only in the lobby, not during a game.
-    - The minimap also shows lava, bushes and conveyor belts.
+  NEW IN v0.4 (built in the v0.5 build)
+    [x] Pure Auto-Reload: remove manual R key, add 0.8s trickle-reload,
+        +10% empty movement speed, and 2-bullet Dash Combat Roll
+    [x] Parting Gift upgrade + 4 Upgrade Synergies (Pinball Wizard,
+        Mosquito, Spray & Pray, Juggernaut)
+    [x] Sudden Death Mayhem events when the final circle closes
+    [x] Match Point "Boss Mode" + Golden Comeback Supply Drop
+    [x] Ghost Prop Possession (crates & barrels) + 1v1 ghost cooldown nerf
+    [x] Flammable bushes, 1.5s barrel fuse on 1st hit, XP orb decay,
+        split direct/orb XP for Turrets and Vault
+    [x] Odd-team "Underdog Squad" buff & pulsing Crown Radar
+    [x] Also from the v0.4 sections: First Blood, revenge +15 XP,
+        winner titles, underdog Reroll button, Kingslayer award, the
+        reworked upgrades (Split Shot, Vampire, Dash Master, Last Laugh
+        grenades, Piercing through crates, Ricochet Rage +6, Magnet),
+        abilities (Grapple yanks barrels, slipping players spray
+        bullets, faster sheep, squeaky Big Head) and pickups (Mystery
+        casts 2, Landmine visible for 1.5 s, Giant Mode crushes crates,
+        Teleport All picks safe spots), glowing last bullet, barrels
+        riding Factory belts, bushes in Dark House
+
+  Implementation notes (details decided while building v0.4)
+    - Possession controls: ability button while over a crate/barrel to
+      hop in, ability or dash to leave, fire to wobble (a small "boo",
+      1.5 s cooldown).
+    - Golden drop: players who are neither leader nor underdog need 1 s
+      on the box. Dual Miniguns = 10 s of Minigun; Mega Giant = 7 s of
+      Giant Mode; Full Heal also adds a 50 HP shield.
+    - A barrel hit for its full HP at once (e.g. by another explosion)
+      blows up immediately, so chain reactions stay instant.
+    - Banana slip: bullets spray every 0.15 s while sliding.
+    - Prediction still covers movement only; dash and ammo come from
+      the host (one round-trip later). Expressive eyes and drag-to-aim
+      remain in M11.
 
   NEXT
-    M11 "MORE"
-        Ghosts throwing crates, drag-to-aim abilities, gamepad.
-
+    M11 "POLISH & INPUT"
+        Drag-to-aim abilities on touch, gamepad support, expressive eyes.
     M12 "PLAYTEST"
         Play on real phones and tune config.js against the targets in
-        section 12 (rounds 60-120 s, leader rarely wins twice in a row,
-        last place wins regularly).
+        section 12.
 
 
 ---------------------------------------------------------------------
-17. DECISIONS AND OPEN QUESTIONS
+17. DECISIONS AND OPEN QUESTIONS (UPDATED FOR v0.4)
 ---------------------------------------------------------------------
 
-  DECIDED
-    - Name: "Blast Party". The home screen shows a version number that
-      goes up with every commit.
-    - Points come only from surviving a round. KOs give XP, not points.
-    - Team modes: YES. Team vs Team (Red vs Blue) is added.
-    - Spectator-only devices: NO. Everyone who joins plays.
-    - "TV view" on the host's screen: NO. The host plays like everyone
-      else.
-    - The round winner skips the next draft.
-    - Upgrades, XP and levels carry over between rounds for the whole
-      match.
-    - The camera follows the player on bigger maps instead of showing
-      the whole map.
+  DECIDED (New in v0.4)
+    - Manual reload vs Auto-reload: 100% AUTO-RELOAD. Removed the R key
+      so laptop players don't have a mechanical advantage over phone
+      players. Added trickle-reload (after 0.8s of not firing) and
+      2-bullet dash reloads so combat feels fluid and never frustrating.
+    - Turret & Vault XP: SPLIT IT. Half goes straight to whoever dealt
+      the killing blow (so shooting objectives from afar is always worth
+      it), and half drops as orbs to spark close-range fights.
+    - Odd number of players in Team vs Team: YES, give the smaller team
+      the "Underdog Squad" buff (+25% HP, +15% reload speed, 1.5s
+      revives) instead of forcing someone to sit out or adding bots.
+    - Crown holder on the minimap: PULSE EVERY 4 SECONDS (for 1.5s)
+      instead of continuous tracking. It keeps the leader hunted while
+      still letting them use bushes and corners to outplay attackers.
+    - More than two teams (2v2v2): NO for now. Two colours (Red/Blue)
+      are much easier to read in chaotic fights on a phone screen.
 
-  OPEN
-    - Should XP orbs from a destroyed turret go straight to whoever
-      destroyed it, instead of being up for grabs? (Currently: up for
-      grabs.)
-    - Team vs Team with an odd number of players: give the smaller team
-      a small bonus (for example +1 level)?
-    - Should there be more than two teams later (for example 2v2v2
-      with 6 players)?
-    - Should the crown holder be visible on the minimap the whole round,
-      or only every few seconds?
-
-=====================================================================
+  OPEN (For v0.5 playtesting)
+    - Does the 2-bullet Dash Reload make the DASH MASTER upgrade too
+      strong when combined with PARTING GIFT (intentionally staying low
+      on ammo to spam final-bullet explosions)?
+    - Should ghosts be able to possess destroyed turret bases to fire
+      harmless "paintball" shots that briefly splat an enemy's screen?

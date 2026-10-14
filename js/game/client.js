@@ -2,10 +2,10 @@
 // an interpolated view slightly in the past, and turns events into juice:
 // particles, sounds, vibration, kill feed and announcements.
 
-import { TICK_RATE, INPUT_SEND_MS, SNAPSHOT_EVERY, NET, TEAMS } from './config.js';
+import { TICK_RATE, INPUT_SEND_MS, SNAPSHOT_EVERY, NET, TEAMS, SUDDEN_DEATH, GOLDEN } from './config.js';
 import { clamp, lerp, lerpAngle } from './geometry.js';
 import { decodeSnapshot, encodeInput } from './protocol.js';
-import { ACTIVES, ACTIVE_IDS, PICKUPS, PICKUP_IDS, VERBS } from './abilities.js';
+import { ACTIVES, ACTIVE_IDS, PICKUPS, PICKUP_IDS, VERBS, SYNERGIES, SYNERGY_IDS } from './abilities.js';
 import { Renderer } from './render.js';
 import { Input } from './input.js';
 import { GameUI } from './ui.js';
@@ -52,6 +52,7 @@ export class GameClient {
     this.ui = new GameUI(root, {
       isHost,
       onPick: (card) => this.send({ type: 'pick', card }),
+      onReroll: () => this.send({ type: 'reroll' }),
       onLeave: (confirmed) => { if (confirmed || window.confirm('Leave the game?')) onLeave(); },
       onPlayAgain,
       onLobby,
@@ -99,7 +100,7 @@ export class GameClient {
         this.myNum = msg.players.find((p) => p.id === this.myId)?.num || 0;
         break;
       case 'offer':
-        this.ui.showOffer(msg.cards, !!msg.skipped);
+        this.ui.showOffer(msg.cards, !!msg.skipped, { reroll: !!msg.reroll, title: msg.title || '' });
         break;
       case 'results':
         this.pendingResults = msg;
@@ -145,6 +146,7 @@ export class GameClient {
     if (this.view) {
       this.processEvents();
       this.phaseTransitions();
+      this.buzzCheck();
       this.ui.update(this.view);
       this.ui.setNotice(this.connNotice || this.pauseNotice());
       if (this.pendingResults) {
@@ -270,6 +272,9 @@ export class GameClient {
       pickups: lerpMap(a.pickups, b.pickups),
       objects: [...b.objects.values()],
       orbs: lerpMap(a.orbs, b.orbs),
+      burnt: b.burnt,
+      suddenDeath: b.suddenDeath,
+      golden: b.golden,
       blips: this.blips.map((bl) => ({ x: bl.x, y: bl.y, age: (now - bl.t) / BLIP_TIME })),
       attackers: this.attackers,
       roster: this.roster,
@@ -277,6 +282,18 @@ export class GameClient {
       me,
       nemesis: me?.nemesis || 0,
     };
+  }
+
+  // MOSQUITO synergy: buzzing when one is close to you.
+  buzzCheck() {
+    const me = this.view.me;
+    if (!me?.alive || this.view.phase !== 'playing') return;
+    for (const p of this.view.players) {
+      if (!p.mosquito || !p.alive || !p.seen || p.num === this.myNum) continue;
+      if (this.view.mode === 'teams' && p.team === me.team) continue;
+      const d = Math.hypot(p.x - me.x, p.y - me.y);
+      if (d < 300) audio.play('buzz', 0.45, 1 - d / 300);
+    }
   }
 
   processEvents() {
@@ -337,7 +354,8 @@ export class GameClient {
         R.light(x, y, 150, 0.12);
         if (p && (isMe(num) || !p.invis)) R.burst(p.x + Math.cos(p.aim) * p.r, p.y + Math.sin(p.aim) * p.r, '#fff3b0', 2, 80, 3);
         if (isEnemy(num)) this.blips.push({ x, y, t: performance.now() });
-        audio.play('shot', isMe(num) ? 0.03 : 0.06, isMe(num) ? 1 : near(x, y));
+        // BIG HEAD: squeaky high-pitched shots.
+        audio.play(v.byNum.get(num)?.bighead ? 'squeak' : 'shot', isMe(num) ? 0.03 : 0.06, isMe(num) ? 1 : near(x, y));
         break;
       }
       case 'tshot':
@@ -350,6 +368,7 @@ export class GameClient {
           R.burst(p.x, p.y, this.roster.get(num)?.color || '#fff', 8, 220);
           R.text(p.x, p.y - p.r - 10, `-${amount}`, isMe(num) ? '#ff5a5f' : '#ffffff', 16);
         }
+        if (v.byNum.get(num)?.bighead) audio.play('squeak', 0.08, near(p?.x ?? 0, p?.y ?? 0));
         if (isMe(num)) {
           R.shake(8); audio.play('hurt'); vibrate(35);
           if (by) this.attackers.set(by, { x: ax, y: ay, t: performance.now() });
@@ -359,7 +378,7 @@ export class GameClient {
       case 'levelUp': {
         const [num, level] = a;
         const p = pos(num);
-        if (p) { R.ring(p.x, p.y, 70, 'rgba(255,210,63,0.9)', 0.5); R.text(p.x, p.y - p.r - 24, 'LEVEL UP!', '#ffd23f', 16); }
+        if (p) { R.ring(p.x, p.y, 150, 'rgba(255,210,63,0.9)', 0.5); R.text(p.x, p.y - p.r - 24, 'LEVEL UP!', '#ffd23f', 16); }
         if (isMe(num)) { this.ui.announce(`LEVEL UP! Lv ${level}`, 'good'); vibrate(40); }
         audio.play('levelup', 0.2, isMe(num) ? 1 : 0.5);
         break;
@@ -450,6 +469,73 @@ export class GameClient {
       }
       case 'reload':
         if (isMe(a[0])) audio.play('reload', 0.2);
+        break;
+      case 'trickle':
+        // Rising "tick-tick-tick" as bullets pop back in.
+        if (isMe(a[0])) audio.play('tick', 0.05, 1, a[1] / a[2]);
+        break;
+      case 'roll': {
+        const p = pos(a[0]);
+        if (p) R.text(p.x, p.y - p.r - 14, '+AMMO', '#ffe23c', 13);
+        if (isMe(a[0])) audio.play('tick', 0.05, 1, 1);
+        break;
+      }
+      case 'synergy': {
+        const syn = SYNERGIES[SYNERGY_IDS[a[1]]];
+        if (!syn) break;
+        if (isMe(a[0])) { this.ui.announce(`SYNERGY! ${syn.icon} ${syn.name}`, 'good'); audio.play('levelup'); }
+        else this.ui.feed([this.name(a[0]), ` unlocked ${syn.icon} ${syn.name}`]);
+        break;
+      }
+      case 'firstBlood':
+        this.ui.announce(isMe(a[0]) ? 'FIRST BLOOD!' : `FIRST BLOOD: ${this.name(a[0]).text}`, isMe(a[0]) ? 'good' : '');
+        break;
+      case 'matchPoint':
+        this.ui.announce(isMe(a[0]) ? '⚠️ YOU ARE ON MATCH POINT! ⚠️' : `⚠️ ${this.name(a[0]).text.toUpperCase()} IS ON MATCH POINT! STOP THEM! ⚠️`, 'bad');
+        audio.play('siren', 1);
+        break;
+      case 'matchPointTeam': {
+        const mine = v.me && v.me.team === a[0];
+        this.ui.announce(mine ? '⚠️ YOUR TEAM IS ON MATCH POINT! ⚠️' : `⚠️ ${TEAMS.names[a[0]]} TEAM IS ON MATCH POINT! STOP THEM! ⚠️`, 'bad');
+        audio.play('siren', 1);
+        break;
+      }
+      case 'suddenDeath':
+        this.ui.announce(`⚡ SUDDEN DEATH! ⚡ ${SUDDEN_DEATH.names[a[0]] || ''}`, 'bad');
+        audio.play('siren', 1);
+        R.shake(8);
+        break;
+      case 'meteor':
+        R.ring(a[0], a[1], 80, 'rgba(255,140,60,0.9)', 0.5);
+        audio.play('boom', 0.2, near(a[0], a[1]) * 0.6);
+        break;
+      case 'golden':
+        this.ui.toast('⭐ Golden supply drop! Check the minimap');
+        audio.play('pickup');
+        break;
+      case 'goldenOpen':
+        if (isMe(a[0])) this.ui.announce(`⭐ ${GOLDEN.names[a[1]] || 'GOLDEN!'}`, 'good');
+        else this.ui.feed([this.name(a[0]), ` opened the golden drop: ${GOLDEN.names[a[1]] || ''}`]);
+        audio.play('levelup', 0.2);
+        break;
+      case 'burn': {
+        const b = v.map.bushes[a[0]];
+        if (b) {
+          for (let i = 0; i < 6; i++) R.burst(b.x + Math.random() * b.w, b.y + Math.random() * b.h, '#ff8c42', 6, 140, 5);
+          R.light(b.x + b.w / 2, b.y + b.h / 2, Math.max(b.w, b.h), 0.8);
+        }
+        break;
+      }
+      case 'hiss':
+        audio.play('hiss', 0.2, near(a[0], a[1]));
+        break;
+      case 'possess':
+        if (isMe(a[0])) this.ui.toast('👻 Possessed! Move it around. Fire = wobble, ability = leave');
+        audio.play('spook', 0.2, 0.5);
+        break;
+      case 'wobble':
+        R.emoji(a[1], a[2] - 34, '👻', 26, 0.7);
+        audio.play('spook', 0.3, near(a[1], a[2]) * 0.7);
         break;
       case 'baa': {
         const p = pos(a[0]);

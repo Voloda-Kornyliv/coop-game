@@ -5,7 +5,7 @@
 
 import { ROUND, MODES } from './config.js';
 import { MAPS } from './maps.js';
-import { ACTIVES, ACTIVE_IDS, PICKUP_IDS, PROJECTILE_IDS, PROP_IDS } from './abilities.js';
+import { ACTIVES, ACTIVE_IDS, PICKUP_IDS, PROJECTILE_IDS, PROP_IDS, activeSynergies } from './abilities.js';
 import { OBJECT_IDS } from './objects.js';
 import { levelProgress, isLeader, isUnderdog } from './progression.js';
 import { pointInRect, circleOverlapsRect, rectsOverlap } from './geometry.js';
@@ -16,6 +16,7 @@ const FLAGS = [
   'alive', 'ghost', 'bubble', 'mirror', 'sheep', 'invis', 'dance', 'slip', 'bighead',
   'reverse', 'confused', 'crown', 'dash', 'speed', 'minigun', 'picked', 'giant', 'shrink',
   'ghostReady', 'emoting', 'away', 'seen', 'hasPos', 'inBush', 'leader', 'underdog',
+  'boss', 'mosquito', 'possessing', 'teamBuff',
 ];
 
 const r1 = (v) => Math.round(v);
@@ -37,6 +38,7 @@ export function sharedState(sim) {
   const all = [...sim.players.values()];
   return {
     crownNum,
+    crownPulse: sim.crownPulse(),
     zone: sim.zoneState(),
     leaders: new Set(all.filter((p) => isLeader(sim, p)).map((p) => p.num)),
     underdogs: new Set(all.filter((p) => isUnderdog(sim, p)).map((p) => p.num)),
@@ -46,8 +48,8 @@ export function sharedState(sim) {
 function encodePlayer(sim, p, viewer, rect, shared) {
   const e = p.e;
   const seen = sim.canSee(viewer, p) && pointInRect(p.x, p.y, rect);
-  // Teammates and the crown holder are always located (minimap + arrows).
-  const hasPos = seen || sim.allies(viewer, p) || p.num === shared.crownNum;
+  // Teammates are always located; the crown holder during radar pulses.
+  const hasPos = seen || sim.allies(viewer, p) || (p.num === shared.crownNum && shared.crownPulse);
   const on = {
     alive: p.alive, ghost: p.ghost, bubble: e.bubble > 0, mirror: e.mirror > 0, sheep: e.sheep > 0,
     invis: e.invis > 0, dance: e.dance > 0, slip: e.slip > 0, bighead: e.bighead > 0,
@@ -55,6 +57,7 @@ function encodePlayer(sim, p, viewer, rect, shared) {
     speed: e.speed > 0, minigun: e.minigun > 0, picked: p.picked, giant: e.giant > 0,
     shrink: e.shrink > 0, ghostReady: p.ghost && p.ghostCd <= 0, emoting: p.emoteT > 0, away: p.away,
     seen, hasPos, inBush: p.inBush, leader: shared.leaders.has(p.num), underdog: shared.underdogs.has(p.num),
+    boss: !!p.boss, mosquito: !!p.stats.mosquito, possessing: !!p.possess, teamBuff: !!p.teamBuff,
   };
   let bits = 0;
   FLAGS.forEach((f, i) => { if (on[f]) bits += 2 ** i; });   // > 31 flags: no bitwise ops
@@ -99,15 +102,19 @@ export function encodeSnapshot(sim, events, viewer, shared = sharedState(sim)) {
     aw: [...sim.players.values()].filter((p) => p.away && sim.paused).map((p) => p.num),
     p: [...sim.players.values()].map((p) => encodePlayer(sim, p, viewer, rect, shared)),
     b: sim.bullets.filter((b) => near(b.x, b.y))
-      .map((b) => [b.id, r1(b.x), r1(b.y), PROJECTILE_IDS.indexOf(b.kind), b.ownerNum, r1(b.r)]),
+      .map((b) => [b.id, r1(b.x), r1(b.y), PROJECTILE_IDS.indexOf(b.kind), b.ownerNum, r1(b.r), b.last ? 1 : 0]),
     o: sim.props.filter((o) => circleOverlapsRect(o.x, o.y, o.r, rect))
       .map((o) => [o.id, PROP_IDS.indexOf(o.kind), r1(o.x), r1(o.y), r1(o.r), o.ownerNum, Math.round(o.angle * 100), r10(o.life - o.age)]),
-    c: sim.crates.filter((c) => rectsOverlap(c, rect)).map((c) => [c.id, r1(c.x), r1(c.y), c.w, c.h, c.hp]),
+    c: sim.crates.filter((c) => rectsOverlap(c, rect)).map((c) => [c.id, r1(c.x), r1(c.y), c.w, c.h, c.hp, c.possessedBy || 0]),
     u: sim.pickups.filter((k) => near(k.x, k.y)).map((k) => [k.id, r1(k.x), r1(k.y)]),
     // Objects are few and the minimap needs turrets + the vault, so send them all.
     x: sim.objects.map((o) => [o.id, OBJECT_IDS.indexOf(o.kind), r1(o.x), r1(o.y), o.r,
-      Math.round((o.hp / o.maxHp) * 100), Math.round(o.aim * 100), o.charge > 0 ? 1 : 0]),
-    q: sim.orbs.filter((o) => near(o.x, o.y)).map((o) => [o.id, r1(o.x), r1(o.y)]),
+      Math.round((o.hp / o.maxHp) * 100), Math.round(o.aim * 100), o.charge > 0 || o.fuse > 0 ? 1 : 0, o.possessedBy || 0]),
+    q: sim.orbs.filter((o) => near(o.x, o.y)).map((o) => [o.id, r1(o.x), r1(o.y), o.age > ROUND.orbDecayAt ? 1 : 0]),
+    bb: [...sim.burnt],
+    sd: sim.suddenDeath ? [sim.suddenDeath.idx, r10(sim.roundTime - sim.suddenDeath.start)] : 0,
+    gd: sim.golden ? [r1(sim.golden.x), r1(sim.golden.y),
+      Math.round(Math.min(1, (sim.golden.progress.get(viewer.id) || 0) / Math.max(0.01, sim.goldenUnlockTime(viewer))) * 100)] : 0,
     // Only for the receiving player: drives local movement prediction.
     me: (({ ack, speed, predictable }) => [ack, r1(speed), predictable ? 1 : 0])(sim.predictionInfo(viewer)),
     e: events,
@@ -155,12 +162,15 @@ export function decodeSnapshot(s) {
     paused: !!s.pa,
     waitingFor: s.aw || [],
     players,
-    bullets: byId(s.b, (a) => ({ id: a[0], x: a[1], y: a[2], kind: PROJECTILE_IDS[a[3]], owner: a[4], r: a[5] })),
+    bullets: byId(s.b, (a) => ({ id: a[0], x: a[1], y: a[2], kind: PROJECTILE_IDS[a[3]], owner: a[4], r: a[5], last: !!a[6] })),
     props: byId(s.o, (a) => ({ id: a[0], kind: PROP_IDS[a[1]], x: a[2], y: a[3], r: a[4], owner: a[5], angle: a[6] / 100, left: a[7] / 10 })),
-    crates: byId(s.c, (a) => ({ id: a[0], x: a[1], y: a[2], w: a[3], h: a[4], hp: a[5] })),
+    crates: byId(s.c, (a) => ({ id: a[0], x: a[1], y: a[2], w: a[3], h: a[4], hp: a[5], possessedBy: a[6] || 0 })),
     pickups: byId(s.u, (a) => ({ id: a[0], x: a[1], y: a[2] })),
-    objects: byId(s.x, (a) => ({ id: a[0], kind: OBJECT_IDS[a[1]], x: a[2], y: a[3], r: a[4], hpPct: a[5] / 100, aim: a[6] / 100, charging: !!a[7] })),
-    orbs: byId(s.q, (a) => ({ id: a[0], x: a[1], y: a[2] })),
+    objects: byId(s.x, (a) => ({ id: a[0], kind: OBJECT_IDS[a[1]], x: a[2], y: a[3], r: a[4], hpPct: a[5] / 100, aim: a[6] / 100, charging: !!a[7], possessedBy: a[8] || 0 })),
+    orbs: byId(s.q, (a) => ({ id: a[0], x: a[1], y: a[2], blink: !!a[3] })),
+    burnt: new Set(s.bb || []),
+    suddenDeath: s.sd ? { idx: s.sd[0], elapsed: s.sd[1] / 10 } : null,
+    golden: s.gd ? { x: s.gd[0], y: s.gd[1], progress: s.gd[2] / 100 } : null,
     self: s.me ? { ack: s.me[0], speed: s.me[1], predictable: !!s.me[2] } : null,
     events: s.e,
   };
@@ -172,6 +182,7 @@ export function encodeRoster(sim) {
     mode: sim.settings.mode,
     players: [...sim.players.values()].map((p) => ({
       num: p.num, id: p.id, name: p.name, color: p.color, hat: p.hat, team: p.team, passives: p.passives,
+      title: p.title || '', synergies: [...activeSynergies(p.passives)],
     })),
   };
 }
@@ -182,7 +193,7 @@ export function encodeInput(s) {
   return {
     type: 'in',
     mx: q(s.mx), my: q(s.my), ax: q(s.ax), ay: q(s.ay),
-    f: s.fire ? 1 : 0, d: s.dash, a: s.abil, i: s.item, e: s.emote, ei: s.emoteIdx, r: s.reload,
+    f: s.fire ? 1 : 0, d: s.dash, a: s.abil, i: s.item, e: s.emote, ei: s.emoteIdx,
     tc: s.touch ? 1 : 0,
     s: s.seq,
   };

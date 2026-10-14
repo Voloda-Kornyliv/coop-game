@@ -39,9 +39,13 @@ export const PLAYER = {
   hp: 100,
   speed: 243,                               // v0.3: 10% slower
   fireInterval: 0.3,                        // ~3 shots per second
+  // Section 6: auto-reload only (no reload button).
   magazine: 8,
-  reloadTime: 1.4,
-  idleReload: 1,                            // reload after this long without shooting
+  reloadTime: 1.3,                          // full reload when empty
+  emptySpeedBonus: 0.1,                     // move faster while completely empty
+  trickleDelay: 0.8,                        // stop shooting this long...
+  trickleEvery: 0.2,                        // ...then one bullet pops back in this often
+  dashReload: 2,                            // "combat roll" bullets
   bulletSpeed: 620,
   bulletRadius: 8,
   bulletDamage: 20,
@@ -58,7 +62,7 @@ export const ROUND = {
   zoneStart: 40,                            // seconds before the ring starts closing
   zoneStartSmallGame: 25,                   // ...with this many players or fewer:
   smallGame: 3,
-  zoneShrinkTime: 50,
+  zoneShrinkTime: 45,
   zoneMinRadius: 220,
   zonePctPerSec: 0.08,                      // of max HP
   lavaPctPerSec: 0.25,
@@ -69,11 +73,40 @@ export const ROUND = {
   crateHp: 3,
   crateDropChance: 0.3,
   ghostCooldown: 6,
+  ghostCooldownDuel: 10,                    // when only 2 players are left alive
+  ghostBananaLife: 8,
+  possessSpeed: 0.3,                        // possessed props move at 30% of player speed
+  orbLife: 20,
+  orbDecayAt: 10,                           // after this, orbs blink and are worth half
   crownHeal: 30,
   slowmoTime: 1.2,
   slowmoScale: 0.3,
   maxPause: 10,                             // seconds a dropped player can pause the round
 };
+
+// Section 9: once the final circle has held for a moment, chaos.
+export const SUDDEN_DEATH = {
+  delay: 5,
+  duration: 15,
+  collapse: 8,                              // then the circle shrinks to nothing over this long
+  events: ['bananas', 'zerog', 'meteors', 'hyper'],
+  names: ['🍌 Banana Storm', '🪐 Zero Gravity', '☄️ Meteor Shower', '⚡ Hyper Speed'],
+};
+
+// Section 12: match point and the golden supply drop.
+export const BOSS = { sizeMult: 1.15, bountyMult: 2 };
+export const GOLDEN = {
+  fromRound: 3, at: 20, radius: 26,
+  unlock: { underdog: 0, normal: 1, leader: 2.5 },
+  kinds: ['minigun', 'giant', 'heal'],
+  names: ['🔥 Dual Miniguns', '🦖 Mega Giant Mode', '💖 Full Heal + Shield'],
+};
+
+// Silly titles for round winners (section 8).
+export const TITLES = [
+  'The Untouchable', 'Banana Baron', 'Supreme Blob', 'Professional Dodger', 'Chaos Gremlin',
+  'Last Blob Standing', 'Certified Menace', 'Duke of Dodge', 'Crate Whisperer', 'Lord of Lava',
+];
 
 // Section 7 and 12.
 export const PROGRESSION = {
@@ -83,10 +116,16 @@ export const PROGRESSION = {
   hpPerLevel: 12,
   damagePerLevel: 0.06,
   levelUpHeal: 25,
-  xp: { crate: 10, barrel: 15, turret: 40, vault: 120, ko: 60, bounty: 40, bountyPerStreak: 20 },
+  // Turret/Vault XP is split: part straight to whoever breaks it, part as orbs.
+  xp: {
+    crate: 10, barrel: 15, turret: 20, turretDirect: 20, vault: 80, vaultDirect: 40,
+    ko: 60, bounty: 40, bountyPerStreak: 20, firstBlood: 25, revenge: 15,
+  },
   orbMagnet: 80,
   orbMagnetPerStack: 100,
-  leaderXp: 0.6,
+  leaderXp: 0.7,
+  levelUpPush: 450,
+  levelUpRadius: 140,
   underdogXp: 1.5,
   maxLevelGap: 2,
   underdogShield: 25,
@@ -98,7 +137,7 @@ export const OBJECTS = {
     radius: 24, hp: 120, hpPerRound: 30, damage: 12, damagePerRound: 3,
     range: 450, interval: 1.2, charge: 0.4, bulletSpeed: 380, turnRate: 4, dropChance: 0.3,
   },
-  barrel: { radius: 20, hp: 40, blastRadius: 140, blastDamage: 40 },
+  barrel: { radius: 20, hp: 40, blastRadius: 140, blastDamage: 40, fuse: 1.5 },
   vault: { radius: 42, hp: 400, dropChance: 1 },
 };
 
@@ -111,6 +150,10 @@ export const TEAMS = {
   reviveRange: 60,
   reviveTime: 3,
   reviveHp: 0.4,
+  // "Underdog Squad": the smaller team when sizes differ (section 2).
+  oddHpBonus: 0.25,
+  oddReloadBonus: 0.15,
+  oddReviveTime: 1.5,
 };
 
 export const MODES = ['ffa', 'teams'];

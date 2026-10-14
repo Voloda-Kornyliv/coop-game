@@ -16,7 +16,7 @@ export class Input {
   constructor(root, { onTouch } = {}) {
     this.root = root;
     this.onTouch = onTouch;
-    this.counts = { dash: 0, abil: 0, item: 0, emote: 0, reload: 0 };
+    this.counts = { dash: 0, abil: 0, item: 0, emote: 0 };
     this.emoteIdx = 0;
     this.keys = new Set();
     this.mouse = { x: 0, y: 0, down: false };
@@ -38,7 +38,7 @@ export class Input {
     const press = (name) => () => { this.counts[name]++; };
 
     // Buttons react on pointerdown (no 300 ms click delay on phones).
-    const buttons = { '#btn-dash': press('dash'), '#btn-ability': press('abil'), '#btn-item': press('item'), '#ammo': press('reload') };
+    const buttons = { '#btn-dash': press('dash'), '#btn-ability': press('abil'), '#btn-item': press('item') };
     for (const [sel, fn] of Object.entries(buttons)) {
       this.root.querySelector(sel).addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -136,7 +136,6 @@ export class Input {
     if (e.code === 'Space') { e.preventDefault(); this.counts.dash++; }
     else if (e.code === 'KeyQ') this.counts.abil++;
     else if (e.code === 'KeyE') this.counts.item++;
-    else if (e.code === 'KeyR') this.counts.reload++;
     else if (/^Digit[1-4]$/.test(e.code)) this.emote(Number(e.code.slice(5)) - 1);
   }
 
@@ -187,7 +186,7 @@ export class Input {
       ax: this.lastAim.x, ay: this.lastAim.y,
       fire,
       dash: this.counts.dash, abil: this.counts.abil, item: this.counts.item,
-      emote: this.counts.emote, emoteIdx: this.emoteIdx, reload: this.counts.reload,
+      emote: this.counts.emote, emoteIdx: this.emoteIdx,
       touch: this.touchMode,
     };
   }

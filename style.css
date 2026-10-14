@@ -240,9 +240,10 @@ body.in-game #menu { display: none; }
   color: var(--hud-text);
   font-size: 12px;
   font-weight: 700;
-  pointer-events: auto;
+  pointer-events: none;
 }
 #ammo.low { color: #ff7a7a; }
+.build-row.synergy { color: #ffd23f; font-weight: 700; }
 
 #toast {
   position: absolute;

@@ -5,7 +5,8 @@
 // Section numbers refer to GAME_DESIGN.txt.
 
 import {
-  TICK_DT, PLAYER, ROUND, COLORS, PROGRESSION, BUSH, TEAMS, INTEREST,
+  TICK_DT, PLAYER, ROUND, COLORS, PROGRESSION, BUSH, TEAMS, INTEREST, OBJECTS,
+  SUDDEN_DEATH, BOSS, GOLDEN, TITLES,
 } from './config.js';
 import {
   clamp, dist2, rand, pick, shuffle, circleRectPush, circleOverlapsRect, pointInRect,
@@ -14,11 +15,11 @@ import {
 import { MAPS, mapIndex } from './maps.js';
 import {
   ACTIVES, PASSIVES, PICKUPS, PROJECTILES, PROPS, ACTIVE_IDS, PASSIVE_IDS, PICKUP_IDS,
-  NEGATIVE_EFFECTS, computeStats, defaultHit,
+  NEGATIVE_EFFECTS, computeStats, defaultHit, activeSynergies, SYNERGY_IDS,
 } from './abilities.js';
 import { OBJECT_KINDS, OBJECT_IDS } from './objects.js';
 import {
-  levelForXp, xpMultiplier, isUnderdog, cardCount, bountyXp, levelCatchUp,
+  levelForXp, xpMultiplier, isUnderdog, isLeader, cardCount, bountyXp, levelCatchUp,
 } from './progression.js';
 
 const EFFECTS = [
@@ -29,7 +30,7 @@ const EFFECTS = [
 const num = (v, lo, hi) => (Number.isFinite(v) ? clamp(v, lo, hi) : 0);
 const int = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const freshAwards = () => ({ kos: 0, slips: 0, selfKOs: 0, ghost: 0, dealt: 0, taken: 0, wins: 0, objects: 0, turrets: 0 });
+const freshAwards = () => ({ kos: 0, slips: 0, selfKOs: 0, ghost: 0, dealt: 0, taken: 0, wins: 0, objects: 0, turrets: 0, kings: 0 });
 
 export class Simulation {
   constructor({ targetWins = 5, mapId = 'random', mode = 'ffa' } = {}) {
@@ -54,6 +55,9 @@ export class Simulation {
     this.objects = [];
     this.orbs = [];
     this.zone = null;
+    this.burnt = new Set();            // indices of bushes burnt this round
+    this.suddenDeath = null;
+    this.golden = null;
     this.pickupTimer = 0;
     this.teamScores = [0, 0];
     this.lastWinners = new Set();
@@ -154,7 +158,7 @@ export class Simulation {
     const p = this.players.get(id);
     if (!p) return;
     this.rosterDirty = true;
-    if (this.phase === 'draft' && p.offer && !p.picked) this.outbox.push({ to: id, msg: { type: 'offer', cards: p.offer } });
+    if (this.phase === 'draft' && p.offer && !p.picked) this.outbox.push({ to: id, msg: { type: 'offer', cards: p.offer, reroll: !!p.canReroll } });
     if (this.results) this.outbox.push({ to: id, msg: this.results });
   }
 
@@ -167,7 +171,7 @@ export class Simulation {
   }
 
   resetForRound(p, spawn) {
-    p.stats = computeStats(p.passives, p.level);
+    p.stats = this.statsFor(p);
     p.r = p.stats.radius;
     p.hp = p.stats.maxHp;
     p.shield = 0;
@@ -185,12 +189,19 @@ export class Simulation {
     p.ammo = p.stats.magazine;
     p.reloadT = 0;
     p.idleT = 0;
+    p.trickleT = 0;
+    p.slipFireT = 0;
+    p.possess = null;
     p.moveSpeed = p.stats.speed;
     p.inBush = false;
     p.revealT = 0;
     p.revived = false;
     p.reviveT = 0;
     p.e = Object.fromEntries(EFFECTS.map((k) => [k, 0]));
+  }
+
+  statsFor(p) {
+    return computeStats(p.passives, p.level, { teamBuff: !!p.teamBuff });
   }
 
   // Inputs come straight from the network: validate everything.
@@ -202,7 +213,7 @@ export class Simulation {
     const seq = int(msg.s);
     if (seq && seq <= (p.lastSeq || 0)) return;
     p.lastSeq = seq;
-    const counts = { d: int(msg.d), a: int(msg.a), i: int(msg.i), e: int(msg.e), r: int(msg.r) };
+    const counts = { d: int(msg.d), a: int(msg.a), i: int(msg.i), e: int(msg.e) };
     if (!p.counts) p.counts = counts;   // first input: don't replay old presses
     p.pending = counts;
     p.input = {
@@ -217,10 +228,8 @@ export class Simulation {
   // lost or duplicated no matter how input messages are batched.
   takePresses(p) {
     const now = p.pending, last = p.counts;
-    if (!now || !last) return { dash: false, abil: false, item: false, emote: false, reload: false };
-    const out = {
-      dash: now.d > last.d, abil: now.a > last.a, item: now.i > last.i, emote: now.e > last.e, reload: now.r > last.r,
-    };
+    if (!now || !last) return { dash: false, abil: false, item: false, emote: false };
+    const out = { dash: now.d > last.d, abil: now.a > last.a, item: now.i > last.i, emote: now.e > last.e };
     p.counts = now;
     return out;
   }
@@ -261,14 +270,14 @@ export class Simulation {
     for (const p of this.players.values()) this.offerCards(p);
   }
 
-  offerCards(p) {
+  offerCards(p, isReroll = false) {
     const firstDraft = this.round === 0;
     const count = cardCount(this, p, firstDraft, this.lastWinners);
     if (count === 0) {
-      // Round winners skip the draft (section 8).
+      // Round winners skip the draft, but get a silly title (section 8).
       p.offer = null;
       p.picked = true;
-      this.outbox.push({ to: p.id, msg: { type: 'offer', cards: [], skipped: true } });
+      this.outbox.push({ to: p.id, msg: { type: 'offer', cards: [], skipped: true, title: p.title } });
       return;
     }
     const cards = new Set();
@@ -284,7 +293,16 @@ export class Simulation {
     }
     p.offer = [...cards];
     p.picked = false;
-    this.outbox.push({ to: p.id, msg: { type: 'offer', cards: p.offer } });
+    // Underdogs get one free reroll per draft (section 12).
+    if (!isReroll) p.canReroll = !firstDraft && isUnderdog(this, p);
+    this.outbox.push({ to: p.id, msg: { type: 'offer', cards: p.offer, reroll: !!p.canReroll } });
+  }
+
+  handleReroll(id) {
+    const p = this.players.get(id);
+    if (!p || this.phase !== 'draft' || p.picked || !p.canReroll) return;
+    p.canReroll = false;
+    this.offerCards(p, true);
   }
 
   handlePick(id, card) {
@@ -295,9 +313,13 @@ export class Simulation {
 
   applyCard(p, card) {
     const [kind, cid] = card.split(':');
+    const before = activeSynergies(p.passives);
     if (kind === 'a') p.ability = cid;
     else p.passives[cid] = (p.passives[cid] || 0) + 1;
-    p.stats = computeStats(p.passives, p.level);
+    for (const id of activeSynergies(p.passives)) {
+      if (!before.has(id)) this.event('synergy', p.num, SYNERGY_IDS.indexOf(id));
+    }
+    p.stats = this.statsFor(p);
     p.picked = true;
     p.offer = null;
     this.rosterDirty = true;
@@ -321,6 +343,11 @@ export class Simulation {
     this.roundTime = 0;
     this.pickupTimer = ROUND.pickupEvery / 2;
     this.slowmo = 0;
+    this.burnt = new Set();
+    this.firstBlood = false;
+    this.suddenDeath = null;
+    this.golden = null;
+    this.goldenDone = false;
 
     // The final circle is random but known from the start (section 9).
     const fx = rand(this.W * 0.3, this.W * 0.7), fy = rand(this.H * 0.3, this.H * 0.7);
@@ -332,6 +359,21 @@ export class Simulation {
     };
 
     for (const p of levelCatchUp(this)) this.event('catchUp', p.num, p.level);
+
+    // Section 2: the smaller team gets the "Underdog Squad" buff.
+    const sizes = [0, 0];
+    for (const p of this.players.values()) if (p.team === 0 || p.team === 1) sizes[p.team]++;
+    const small = sizes[0] === sizes[1] ? -1 : sizes[0] < sizes[1] ? 0 : 1;
+    for (const p of this.players.values()) p.teamBuff = this.isTeams && p.team === small;
+
+    // Section 12: match point "boss mode".
+    const target = this.settings.targetWins;
+    for (const p of this.players.values()) p.boss = target > 1 && p.score === target - 1;
+    const bosses = [...this.players.values()].filter((p) => p.boss);
+    if (bosses.length) {
+      if (this.isTeams) this.event('matchPointTeam', bosses[0].team);
+      else for (const p of bosses) this.event('matchPoint', p.num);
+    }
 
     const spawns = this.assignSpawns();
     for (const p of this.players.values()) {
@@ -396,6 +438,7 @@ export class Simulation {
     for (const p of this.players.values()) {
       const won = this.lastWinners.has(p.id);
       p.streak = won ? p.streak + 1 : 0;
+      p.title = won ? pick(TITLES) : null;
       if (won) p.aw.wins++;
     }
     this.slowmo = ROUND.slowmoTime;
@@ -428,11 +471,12 @@ export class Simulation {
         ? [['⭐', 'Team MVP', best((p) => p.aw.kos * 100 + p.aw.dealt + p.aw.objects * 20, 0, winningTeam), (p) => `${plural(p.aw.kos, 'KO')}, ${Math.round(p.aw.dealt)} damage`]]
         : [['🏆', 'Champion', best((p) => p.score), (p) => plural(p.score, 'round win')]]),
       ['🎯', 'Sharpshooter', best((p) => p.aw.kos), (p) => plural(p.aw.kos, 'KO')],
+      ['🗡️', 'Kingslayer', best((p) => p.aw.kings), (p) => plural(p.aw.kings, 'Crown Holder KO')],
       ['🧱', 'Demolition', best((p) => p.aw.objects), (p) => plural(p.aw.objects, 'object') + ' destroyed'],
       ['🔧', 'Turret Tamer', best((p) => p.aw.turrets), (p) => plural(p.aw.turrets, 'turret') + ' destroyed'],
       ['🍌', 'Banana King', best((p) => p.aw.slips), (p) => `${plural(p.aw.slips, 'enemy', 'enemies')} slipped`],
       ['💥', 'Kamikaze', best((p) => p.aw.selfKOs), (p) => plural(p.aw.selfKOs, 'self-KO')],
-      ['👻', 'Ghost of the Match', best((p) => p.aw.ghost), (p) => plural(p.aw.ghost, 'ghostly annoyance')],
+      ['👻', 'Ghost of the Match', best((p) => p.aw.ghost), (p) => `${plural(p.aw.ghost, 'ghostly annoyance')} & possessions`],
       ['🕊️', 'Pacifist', best((p) => -p.aw.dealt, -Infinity), (p) => `only ${Math.round(p.aw.dealt)} damage dealt`],
       ['🩹', 'Unlucky', best((p) => p.aw.taken), (p) => `took ${Math.round(p.aw.taken)} damage`],
     ].filter(([, , p]) => p).map(([icon, title, p, text]) => ({ icon, title, num: p.num, text: text(p) }));
@@ -525,7 +569,11 @@ export class Simulation {
     for (const p of this.players.values()) this.updatePlayer(p, dt);
     this.separatePlayers();
     this.updateRevives(dt);
-    for (const o of this.objects) OBJECT_KINDS[o.kind].update?.call(OBJECT_KINDS[o.kind], this, o, dt);
+    for (const o of [...this.objects]) {
+      if (this.objects.includes(o)) OBJECT_KINDS[o.kind].update?.call(OBJECT_KINDS[o.kind], this, o, dt);
+    }
+    this.updateSuddenDeath(dt);
+    this.updateGolden(dt);
     this.updateProps(dt);
     this.updateBullets(dt);
     this.updatePickups(dt);
@@ -564,6 +612,12 @@ export class Simulation {
       p.dashCd = p.stats.dashCooldown;
       e.slip = 0;
       this.event('dash', p.num);
+      // COMBAT ROLL: dashing with a part-empty magazine loads bullets (section 6).
+      if (p.ammo < p.stats.magazine) {
+        p.ammo = Math.min(p.stats.magazine, p.ammo + p.stats.dashReload);
+        p.reloadT = 0;
+        this.event('roll', p.num);
+      }
     }
     if (presses.abil && p.abilCd <= 0 && canAct && ACTIVES[p.ability]) {
       ACTIVES[p.ability].cast(this, p);
@@ -579,14 +633,23 @@ export class Simulation {
     }
 
     this.movePlayer(p, dt);
-    p.inBush = this.map.bushes.some((b) => pointInRect(p.x, p.y, b));
-    this.updateReload(p, dt, presses);
+    p.inBush = this.map.bushes.some((b, i) => !this.burnt.has(i) && pointInRect(p.x, p.y, b));
+    this.updateReload(p, dt);
 
-    if (inp.fire && p.fireCd <= 0 && !e.dance && !e.dash) {
+    if (inp.fire && p.fireCd <= 0 && !e.dance && !e.dash && !e.slip) {
       if (e.sheep) {
         if (p.baaCd <= 0) { this.event('baa', p.num); p.baaCd = 0.6; }
-      } else if (e.minigun > 0 || p.ammo > 0) {
+      } else if (e.minigun > 0 || p.ammo > 0 || this.sdType() === 'hyper') {
         this.fire(p);
+      }
+    }
+    // BANANA: slipping players spray bullets in random directions, for free.
+    if (e.slip > 0) {
+      p.slipFireT -= dt;
+      if (p.slipFireT <= 0) {
+        p.slipFireT = 0.15;
+        this.spawnProjectile(p, 'bullet', { angle: rand(0, Math.PI * 2), r: p.stats.bulletR, dmg: p.stats.bulletDmg });
+        this.event('shot', p.num, Math.round(p.x), Math.round(p.y));
       }
     }
 
@@ -595,32 +658,45 @@ export class Simulation {
     this.applyHazards(p, dt);
   }
 
-  // Magazine (section 6): reload when empty, after a pause in shooting, or on R.
-  updateReload(p, dt, presses) {
+  // Auto-reload only (section 6): a full reload when empty, or bullets
+  // trickling back one by one after a short pause in shooting.
+  updateReload(p, dt) {
     p.idleT += dt;
+    const mag = p.stats.magazine;
+    if (this.sdType() === 'hyper') { p.ammo = mag; p.reloadT = 0; return; }
     if (p.reloadT > 0) {
-      // Shooting with bullets left cancels an idle reload.
-      if (p.input.fire && p.ammo > 0) { p.reloadT = 0; return; }
       p.reloadT -= dt;
-      if (p.reloadT <= 0) { p.reloadT = 0; p.ammo = p.stats.magazine; }
+      if (p.reloadT <= 0) { p.reloadT = 0; p.ammo = mag; this.event('reloaded', p.num); }
       return;
     }
-    if (p.ammo >= p.stats.magazine) return;
-    if (p.ammo <= 0 || p.idleT >= PLAYER.idleReload || presses.reload) {
+    if (p.ammo <= 0) {
       p.reloadT = p.stats.reloadTime;
       this.event('reload', p.num);
+      return;
+    }
+    if (p.ammo < mag && p.idleT >= PLAYER.trickleDelay) {
+      p.trickleT -= dt;
+      if (p.trickleT <= 0) {
+        p.ammo++;
+        p.trickleT = p.stats.trickleEvery;
+        this.event('trickle', p.num, p.ammo, mag);
+      }
+    } else {
+      p.trickleT = 0;
     }
   }
 
   movePlayer(p, dt) {
     const e = p.e, inp = p.input, map = this.map;
-    p.r = p.stats.radius * (e.shrink ? 0.6 : 1) * (e.giant ? 1.9 : 1);
+    p.r = p.stats.radius * (e.shrink ? 0.6 : 1) * (e.giant ? 1.9 : 1) * (p.boss ? BOSS.sizeMult : 1);
 
     let mx = inp.mx, my = inp.my;
     const m = Math.hypot(mx, my);
     if (m > 1) { mx /= m; my /= m; }
     if (e.reverse) { mx = -mx; my = -my; }
-    const speed = p.stats.speed * (e.speed ? 1.7 : 1) * (e.shrink ? 1.35 : 1) * (e.giant ? 0.85 : 1) * (e.sheep ? 0.8 : 1);
+    const speed = p.stats.speed * (e.speed ? 1.7 : 1) * (e.shrink ? 1.35 : 1) * (e.giant ? 0.85 : 1) * (e.sheep ? 1.2 : 1)
+      * (p.ammo <= 0 && p.reloadT > 0 ? 1 + PLAYER.emptySpeedBonus : 1)   // duck for cover while empty
+      * (this.sdType() === 'hyper' ? 1.5 : 1);
     p.moveSpeed = speed;               // sent to the player for movement prediction
     let tvx = mx * speed, tvy = my * speed;
     if (e.dance) { tvx = 0; tvy = 0; }
@@ -643,6 +719,10 @@ export class Simulation {
     const decay = Math.exp(-(onIce ? 2 : 6) * dt);
     p.kvx *= decay; p.kvy *= decay;
 
+    // JUGGERNAUT and GIANT MODE crush crates just by walking through them.
+    if (p.stats.juggernaut || e.giant) {
+      for (const c of [...this.crates]) if (circleOverlapsRect(p.x, p.y, p.r + 2, c)) this.damageCrate(c, 99, p);
+    }
     const n = this.collideWorld(p, p.r);
     if (n && e.slip) {
       const d = p.slipDx * n.nx + p.slipDy * n.ny;
@@ -740,23 +820,34 @@ export class Simulation {
 
   fire(p) {
     const minigun = p.e.minigun > 0;
+    const free = minigun || this.sdType() === 'hyper';
     p.fireCd = p.stats.fireInterval * (minigun ? 0.3 : 1);
     p.revealT = BUSH.revealTime;
     p.idleT = 0;
-    if (!minigun) p.ammo--;
+    p.trickleT = 0;
+    // The last bullet glows (everyone sees the reload coming); with
+    // PARTING GIFT it's huge and explodes (sections 8B and 14).
+    const last = !free && p.ammo === 1;
+    if (!free) p.ammo--;
     let aim = p.aim;
     if (p.input.touch) aim = this.assistAim(p, aim);
     const n = p.stats.shots;
     for (let i = 0; i < n; i++) {
-      const spread = (i - (n - 1) / 2) * 0.2 + (minigun ? (Math.random() - 0.5) * 0.15 : 0);
-      this.spawnProjectile(p, 'bullet', {
-        angle: aim + spread,
-        r: p.stats.bulletR,
+      const angle = aim + (i - (n - 1) / 2) * 0.2 + (minigun ? (Math.random() - 0.5) * 0.15 : 0);
+      if (last && p.stats.gift) {
+        this.spawnProjectile(p, 'giftShot', { angle, r: p.stats.bulletR * 2, dmg: p.stats.bulletDmg + 15 });
+        continue;
+      }
+      const b = this.spawnProjectile(p, 'bullet', {
+        angle,
+        r: p.stats.bulletR * (last ? 1.25 : 1),
         dmg: p.stats.bulletDmg,
         bounces: p.stats.bounces,
         pierce: p.stats.pierce,
       });
+      b.last = last;
     }
+    if (p.stats.spray) this.push(p, -Math.cos(aim), -Math.sin(aim), 90, true);   // SPRAY & PRAY
     this.event('shot', p.num, Math.round(p.x), Math.round(p.y));
   }
 
@@ -821,26 +912,98 @@ export class Simulation {
   }
 
   updateGhost(p, dt, presses) {
+    if (p.possess) { this.updatePossession(p, dt, presses); return; }
     const inp = p.input;
     p.x = clamp(p.x + inp.mx * 360 * dt, 20, this.W - 20);
     p.y = clamp(p.y + inp.my * 360 * dt, 20, this.H - 20);
-    if (this.phase !== 'playing' || p.ghostCd > 0) return;
+    if (this.phase !== 'playing') return;
+    // PROP POSSESSION (section 11): ability over a crate or barrel hops inside.
     if (presses.abil || presses.item) {
-      this.spawnProp('banana', p.x, p.y, p.id);
-      p.ghostCd = ROUND.ghostCooldown;
+      const prop = this.propAt(p.x, p.y);
+      if (prop) { this.possess(p, prop); return; }
+    }
+    if (p.ghostCd > 0) return;
+    // In a 1v1 finale ghosts wait longer, so the duel stays fair.
+    const cd = this.living().length === 2 ? ROUND.ghostCooldownDuel : ROUND.ghostCooldown;
+    if (presses.abil || presses.item) {
+      this.spawnProp('banana', p.x, p.y, p.id, { life: ROUND.ghostBananaLife });
+      p.ghostCd = cd;
       p.aw.ghost++;
       this.event('ghostBanana', p.num);
     } else if (inp.fire || presses.dash) {
-      let spooked = 0;
-      for (const o of this.living()) {
-        if (this.allies(p, o)) continue;
-        const dx = o.x - p.x, dy = o.y - p.y;
-        const d = Math.hypot(dx, dy) || 1;
-        if (d < 110) { this.push(o, dx / d, dy / d, 650); spooked++; }
-      }
-      p.ghostCd = spooked ? ROUND.ghostCooldown : 0.5;
+      const spooked = this.spook(p.x, p.y, p, 110, 650);
+      p.ghostCd = spooked ? cd : 0.5;
       if (spooked) p.aw.ghost++;
       this.event('spook', p.num, Math.round(p.x), Math.round(p.y));
+    }
+  }
+
+  // "BOO!": push nearby living enemies and XP orbs away. Returns how many players.
+  spook(x, y, ghost, radius, force) {
+    let spooked = 0;
+    for (const o of this.living()) {
+      if (this.allies(ghost, o)) continue;
+      const dx = o.x - x, dy = o.y - y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d < radius) { this.push(o, dx / d, dy / d, force); spooked++; }
+    }
+    for (const o of this.orbs) {
+      const dx = o.x - x, dy = o.y - y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d < radius) { o.vx += (dx / d) * 400; o.vy += (dy / d) * 400; }
+    }
+    return spooked;
+  }
+
+  propAt(x, y) {
+    const crate = this.crates.find((c) => !c.possessedBy && pointInRect(x, y, c));
+    if (crate) return { type: 'crate', ref: crate };
+    const barrel = this.objects.find((o) => o.kind === 'barrel' && !o.possessedBy && !o.fuse && dist2(x, y, o.x, o.y) < o.r * o.r);
+    return barrel ? { type: 'barrel', ref: barrel } : null;
+  }
+
+  possess(p, prop) {
+    prop.ref.possessedBy = p.num;
+    p.possess = { type: prop.type, id: prop.ref.id };
+    p.aw.ghost++;
+    this.event('possess', p.num);
+  }
+
+  releaseProp(num) {
+    for (const p of this.players.values()) {
+      if (p.num !== num || !p.possess) continue;
+      const ref = p.possess.type === 'crate' ? this.crates.find((c) => c.id === p.possess.id) : this.objects.find((o) => o.id === p.possess.id);
+      if (ref) ref.possessedBy = 0;
+      p.possess = null;
+      this.event('unpossess', p.num);
+    }
+  }
+
+  updatePossession(p, dt, presses) {
+    const pos = p.possess;
+    const ref = pos.type === 'crate' ? this.crates.find((c) => c.id === pos.id) : this.objects.find((o) => o.id === pos.id);
+    if (!ref || this.phase !== 'playing') { p.possess = null; if (ref) ref.possessedBy = 0; return; }
+    if (presses.abil || presses.item || presses.dash) { this.releaseProp(p.num); return; }
+    const inp = p.input;
+    const step = PLAYER.speed * ROUND.possessSpeed * dt;
+    const dx = clamp(inp.mx, -1, 1) * step, dy = clamp(inp.my, -1, 1) * step;
+    if (pos.type === 'crate') {
+      const next = { x: ref.x + dx, y: ref.y + dy, w: ref.w, h: ref.h };
+      const blocked = next.x < 0 || next.y < 0 || next.x + ref.w > this.W || next.y + ref.h > this.H
+        || this.map.walls.some((w) => rectsOverlap(next, w))
+        || this.crates.some((c) => c !== ref && rectsOverlap(next, c))
+        || this.objects.some((o) => circleOverlapsRect(o.x, o.y, o.r, next));
+      if (!blocked) { ref.x = next.x; ref.y = next.y; }
+      p.x = ref.x + ref.w / 2; p.y = ref.y + ref.h / 2;
+    } else {
+      this.moveObject(ref, ref.x + dx, ref.y + dy);
+      p.x = ref.x; p.y = ref.y;
+    }
+    // Wobble: a small scare for anyone close.
+    if (inp.fire && p.ghostCd <= 0) {
+      this.spook(p.x, p.y, p, 100, 300);
+      p.ghostCd = 1.5;
+      this.event('wobble', p.num, Math.round(p.x), Math.round(p.y));
     }
   }
 
@@ -853,7 +1016,7 @@ export class Simulation {
         && dist2(p.x, p.y, g.x, g.y) < (TEAMS.reviveRange + p.r) ** 2);
       if (!helper) { g.reviveT = Math.max(0, g.reviveT - dt * 2); continue; }
       g.reviveT += dt;
-      if (g.reviveT >= TEAMS.reviveTime) this.revive(g, helper);
+      if (g.reviveT >= (g.teamBuff ? TEAMS.oddReviveTime : TEAMS.reviveTime)) this.revive(g, helper);
     }
   }
 
@@ -891,8 +1054,17 @@ export class Simulation {
   levelUp(p) {
     const oldMax = p.stats.maxHp;
     p.level++;
-    p.stats = computeStats(p.passives, p.level);
-    if (p.alive) p.hp = Math.min(p.stats.maxHp, p.hp + (p.stats.maxHp - oldMax) + PROGRESSION.levelUpHeal);
+    p.stats = this.statsFor(p);
+    if (p.alive) {
+      p.hp = Math.min(p.stats.maxHp, p.hp + (p.stats.maxHp - oldMax) + PROGRESSION.levelUpHeal);
+      // A small knockback wave around you (section 7).
+      for (const o of this.living()) {
+        if (!this.isEnemy(p, o)) continue;
+        const dx = o.x - p.x, dy = o.y - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d < PROGRESSION.levelUpRadius + o.r) this.push(o, dx / d, dy / d, PROGRESSION.levelUpPush);
+      }
+    }
     this.event('levelUp', p.num, p.level);
   }
 
@@ -900,13 +1072,16 @@ export class Simulation {
     const n = clamp(Math.round(total / 10), 1, 12);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2, s = rand(80, 240);
-      this.orbs.push({ id: this.nextId++, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, value: total / n, dead: false });
+      this.orbs.push({ id: this.nextId++, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, value: total / n, age: 0, dead: false });
     }
   }
 
   updateOrbs(dt) {
     const living = this.living();
     for (const o of this.orbs) {
+      // ORB DECAY (section 7): half value after 10 s, gone after 20 s.
+      o.age += dt;
+      if (o.age >= ROUND.orbLife) { o.dead = true; continue; }
       const f = Math.exp(-4 * dt);
       o.vx *= f; o.vy *= f;
       let best = null, bestD = Infinity;
@@ -921,7 +1096,7 @@ export class Simulation {
         o.vy = ((best.y - o.y) / d) * 560;
         if (d < best.r + 10) {
           o.dead = true;
-          this.gainXp(best, o.value);
+          this.gainXp(best, o.value * (o.age > ROUND.orbDecayAt ? 0.5 : 1));
           this.event('orb', best.num);
           continue;
         }
@@ -956,7 +1131,9 @@ export class Simulation {
       attacker.aw.dealt += shown;
       target.lastHit = { by: attacker.id, t: this.roundTime };
       if (attacker.alive && attacker.stats.vampire && !quiet) {
-        attacker.hp = Math.min(attacker.stats.maxHp, attacker.hp + attacker.stats.vampire);
+        // 4 HP per hit, 2 per pellet (shotgun / split shot).
+        const pellet = source === 'pellet' || (source === 'bullet' && attacker.stats.shots > 1);
+        attacker.hp = Math.min(attacker.stats.maxHp, attacker.hp + attacker.stats.vampire * (pellet ? 2 : 4));
       }
     }
     if (!quiet) {
@@ -990,13 +1167,21 @@ export class Simulation {
     if (killer) {
       killer.aw.kos++;
       this.gainXp(killer, PROGRESSION.xp.ko);
+      if (!this.firstBlood) {
+        this.firstBlood = true;
+        this.gainXp(killer, PROGRESSION.xp.firstBlood);
+        this.event('firstBlood', killer.num);
+      }
       if (this.isCrown(victim)) {
-        this.gainXp(killer, bountyXp(victim));
+        killer.aw.kings++;
+        this.gainXp(killer, bountyXp(victim) * (victim.boss ? BOSS.bountyMult : 1));
         if (killer.alive) killer.hp = Math.min(killer.stats.maxHp, killer.hp + ROUND.crownHeal);
+        this.spawnPickup(victim.x, victim.y);
         this.event('crown', killer.num);
       }
       if (killer.nemesis === victim.id) {
         killer.nemesis = null;
+        this.gainXp(killer, PROGRESSION.xp.revenge);
         this.event('revenge', killer.num);
       }
       victim.nemesis = killer.id;
@@ -1006,11 +1191,20 @@ export class Simulation {
 
     this.event('ko', victim.num, killer ? killer.num : 0, verb, Math.round(victim.x), Math.round(victim.y));
 
+    // LAST LAUGH: three live grenades roll out.
     if (victim.stats.lastLaugh && source !== 'left') {
       const n = victim.stats.lastLaugh;
-      this.explode(victim.x, victim.y, 100 + 25 * n, 25 + 10 * n, victim, 'lastlaugh', victim);
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + rand(0, 1);
+        this.spawnProp('grenade', victim.x, victim.y, victim.id, { vx: Math.cos(a) * 280, vy: Math.sin(a) * 280, dmg: 20 + 10 * n });
+      }
     }
     this.checkRoundEnd();
+  }
+
+  // CROWN RADAR (section 4): the leader shows for 1.5 s every 4 s.
+  crownPulse() {
+    return this.roundTime % 4 < 1.5;
   }
 
   // The crown is free-for-all only (section 2).
@@ -1024,7 +1218,10 @@ export class Simulation {
   }
 
   push(target, nx, ny, force, ignoreMass = false) {
-    const f = !ignoreMass && target.e.giant ? force * 0.3 : force;
+    let f = force;
+    if (!ignoreMass && target.e.giant) f *= 0.3;
+    if (!ignoreMass && target.stats.juggernaut) f *= 0.5;
+    if (this.sdType() === 'zerog') f *= 4;
     target.kvx += nx * f;
     target.kvy += ny * f;
   }
@@ -1051,6 +1248,7 @@ export class Simulation {
 
   explode(x, y, radius, dmg, attacker, source, exclude = null) {
     this.event('boom', Math.round(x), Math.round(y), radius);
+    this.burnBushesAt(x, y, radius);
     for (const p of this.living()) {
       if (p === exclude) continue;
       const dx = p.x - x, dy = p.y - y;
@@ -1067,8 +1265,19 @@ export class Simulation {
     }
   }
 
+  // ANTI-CAMPING (section 9): explosions and fire burn bushes for the round.
+  burnBushesAt(x, y, radius) {
+    this.map.bushes.forEach((b, i) => {
+      if (!this.burnt.has(i) && circleOverlapsRect(x, y, radius, b)) {
+        this.burnt.add(i);
+        this.event('burn', i);
+      }
+    });
+  }
+
   damageCrate(c, amount, attacker = null) {
     if (c.hp <= 0) return;
+    if (c.possessedBy) { amount = c.hp; this.releaseProp(c.possessedBy); }   // a shot pops the ghost out
     c.hp -= amount;
     if (c.hp > 0) return;
     this.crates = this.crates.filter((o) => o !== c);
@@ -1082,13 +1291,28 @@ export class Simulation {
   damageObject(o, amount, attacker = null) {
     if (o.hp <= 0 || amount <= 0) return;
     if (attacker) amount *= attacker.stats.damageMult;
+    if (o.possessedBy) this.releaseProp(o.possessedBy);
     o.hp -= amount;
-    if (o.hp > 0) return;
+    if (o.kind === 'barrel' && attacker) o.igniter = attacker;
+    if (o.hp > 0) {
+      // Barrels: the first hit lights a fuse (section 9).
+      if (o.kind === 'barrel' && !o.fuse) {
+        o.fuse = OBJECTS.barrel.fuse;
+        this.event('hiss', Math.round(o.x), Math.round(o.y));
+      }
+      return;
+    }
+    this.destroyObject(o, attacker);
+  }
+
+  destroyObject(o, attacker = null) {
+    if (!this.objects.includes(o)) return;
     this.objects = this.objects.filter((x) => x !== o);
     const def = OBJECT_KINDS[o.kind];
     if (attacker) {
       attacker.aw.objects++;
       if (o.kind === 'turret') attacker.aw.turrets++;
+      this.gainXp(attacker, def.directXp || 0);       // split XP: some straight to the breaker
     }
     this.event('objDown', OBJECT_IDS.indexOf(o.kind), Math.round(o.x), Math.round(o.y));
     this.spawnOrbs(o.x, o.y, def.xp);
@@ -1203,7 +1427,7 @@ export class Simulation {
     let diff = want - cur;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    const turn = 1.6 * b.magnet * dt;
+    const turn = 1.0 * b.magnet * dt;
     cur += clamp(diff, -turn, turn);
     b.vx = Math.cos(cur) * sp;
     b.vy = Math.sin(cur) * sp;
@@ -1218,6 +1442,7 @@ export class Simulation {
     }
     if (!push) {
       for (const c of this.crates) {
+        if (b.pierced === c.id) continue;
         push = circleRectPush(b.x, b.y, b.r, c);
         if (push) { hitRect = c; break; }
       }
@@ -1252,6 +1477,13 @@ export class Simulation {
     if (!push) return false;
 
     const owner = b.owner ? this.players.get(b.owner) || null : null;
+    // PIERCING goes through the first crate too.
+    if (hitRect && hitRect.hp !== undefined && b.pierce > 0 && !def.onWall) {
+      b.pierce--;
+      b.pierced = hitRect.id;
+      this.damageCrate(hitRect, 1, owner);
+      return false;
+    }
     if (hitRect && hitRect.hp !== undefined) this.damageCrate(hitRect, 1, owner);
     if (hitObject && def.objects !== false) this.damageObject(hitObject, b.dmg, owner);
 
@@ -1262,7 +1494,7 @@ export class Simulation {
     };
 
     if (def.onWall) {
-      if (def.onWall(this, b)) { b.dead = true; return true; }
+      if (def.onWall(this, b, hitObject)) { b.dead = true; return true; }
       reflect();
       return false;
     }
@@ -1272,8 +1504,16 @@ export class Simulation {
       b.bounced = true;
       reflect();
       if (b.rage) {
-        b.dmg += 5 * b.rage;
+        b.dmg += 6 * b.rage;
         b.vx *= 1.12; b.vy *= 1.12;
+      }
+      // PINBALL WIZARD synergy: after a bounce, head for the nearest enemy.
+      if (owner?.stats.pinball) {
+        const t = this.nearestEnemy(b.x, b.y, owner, 800);
+        if (t) {
+          const sp = Math.hypot(b.vx, b.vy), a = Math.atan2(t.y - b.y, t.x - b.x);
+          b.vx = Math.cos(a) * sp; b.vy = Math.sin(a) * sp;
+        }
       }
       return false;
     }
@@ -1360,8 +1600,8 @@ export class Simulation {
     for (const o of this.props) {
       if (o.dead) continue;
       o.age += dt;
-      if (o.age >= o.life) { o.dead = true; continue; }
       const def = PROPS[o.kind];
+      if (o.age >= o.life) { o.dead = true; def.onExpire?.(this, o); continue; }
       def.update?.(this, o, dt);
       if (!def.onTouch) continue;
       for (const p of this.living()) {
@@ -1470,6 +1710,127 @@ export class Simulation {
     if (!z || (this.phase !== 'playing' && this.phase !== 'roundEnd' && this.phase !== 'countdown')) return null;
     const t = this.roundTime - z.startAt;
     const k = clamp(t / ROUND.zoneShrinkTime, 0, 1);
-    return { x: z.fx, y: z.fy, r: z.startR + (z.minR - z.startR) * k, active: t > 0, startsIn: Math.max(0, -t) };
+    let r = z.startR + (z.minR - z.startR) * k;
+    // After Sudden Death has run its course the circle closes completely.
+    const sd = this.suddenDeath;
+    if (sd) {
+      const c = (this.roundTime - sd.start - SUDDEN_DEATH.duration) / SUDDEN_DEATH.collapse;
+      if (c > 0) r = z.minR * Math.max(0, 1 - c);
+    }
+    return { x: z.fx, y: z.fy, r, active: t > 0, startsIn: Math.max(0, -t) };
+  }
+
+  // ------------------------------------------------------------------ sudden death (section 9)
+
+  sdType() {
+    return this.suddenDeath?.type || null;
+  }
+
+  updateSuddenDeath(dt) {
+    if (this.phase !== 'playing' || !this.zone) return;
+    if (!this.suddenDeath) {
+      const startAt = this.zone.startAt + ROUND.zoneShrinkTime + SUDDEN_DEATH.delay;
+      if (this.roundTime < startAt) return;
+      const alive = this.living();
+      const sides = this.isTeams ? new Set(alive.map((p) => p.team)).size : alive.length;
+      if (sides < 2) return;
+      const idx = Math.floor(Math.random() * SUDDEN_DEATH.events.length);
+      this.suddenDeath = { type: SUDDEN_DEATH.events[idx], idx, start: this.roundTime, timer: 0 };
+      this.event('suddenDeath', idx);
+      return;
+    }
+    const sd = this.suddenDeath;
+    sd.timer -= dt;
+    if (sd.timer > 0) return;
+    if (sd.type === 'bananas') {
+      sd.timer = 1;
+      for (let i = 0; i < 2; i++) {
+        const spot = this.randomPointInZone(16);
+        if (spot) { this.spawnProp('banana', spot.x, spot.y, null, { life: 10 }); this.event('bananaRain', Math.round(spot.x), Math.round(spot.y)); }
+      }
+    } else if (sd.type === 'meteors') {
+      sd.timer = 1.5;
+      const spot = this.randomPointInZone(OBJECTS.barrel.radius + 6);
+      if (spot) { this.objects.push(this.makeObject('barrel', spot)); this.event('meteor', Math.round(spot.x), Math.round(spot.y)); }
+    } else {
+      sd.timer = 1;
+    }
+  }
+
+  randomPointInZone(r) {
+    const z = this.zoneState();
+    if (!z) return null;
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * Math.max(0, z.r - r);
+      const x = z.x + Math.cos(a) * d, y = z.y + Math.sin(a) * d;
+      if (this.isFree(x, y, r)) return { x, y };
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------------ golden supply drop (section 12)
+
+  updateGolden(dt) {
+    if (this.phase !== 'playing' || this.round < GOLDEN.fromRound) return;
+    if (!this.golden) {
+      if (this.goldenDone || this.roundTime < GOLDEN.at) return;
+      const spot = this.randomFreeSpot(GOLDEN.radius, true);
+      this.golden = { x: spot.x, y: spot.y, progress: new Map() };
+      this.goldenDone = true;
+      this.event('golden', Math.round(spot.x), Math.round(spot.y));
+      return;
+    }
+    const g = this.golden;
+    for (const p of this.living()) {
+      if (dist2(p.x, p.y, g.x, g.y) > (p.r + GOLDEN.radius) ** 2) { g.progress.delete(p.id); continue; }
+      const t = (g.progress.get(p.id) || 0) + dt;
+      g.progress.set(p.id, t);
+      if (t >= this.goldenUnlockTime(p)) { this.openGolden(p); return; }
+    }
+  }
+
+  // Underdogs open it instantly; the leader has to stand on it.
+  goldenUnlockTime(p) {
+    if (isUnderdog(this, p)) return GOLDEN.unlock.underdog;
+    if (isLeader(this, p)) return GOLDEN.unlock.leader;
+    return GOLDEN.unlock.normal;
+  }
+
+  openGolden(p) {
+    const idx = Math.floor(Math.random() * GOLDEN.kinds.length);
+    const kind = GOLDEN.kinds[idx];
+    if (kind === 'minigun') p.e.minigun = 10;
+    else if (kind === 'giant') p.e.giant = 7;
+    else { p.hp = p.stats.maxHp; p.shield = (p.shield || 0) + 50; }
+    this.golden = null;
+    this.event('goldenOpen', p.num, idx);
+  }
+
+  // ------------------------------------------------------------------ movable objects
+
+  shoveObject(o, vx, vy) {
+    o.vx = vx;
+    o.vy = vy;
+  }
+
+  // Move an object if nothing solid is in the way.
+  moveObject(o, x, y) {
+    if (x < o.r || y < o.r || x > this.W - o.r || y > this.H - o.r) return false;
+    if (this.map.walls.some((w) => circleOverlapsRect(x, y, o.r, w))) return false;
+    if (this.crates.some((c) => circleOverlapsRect(x, y, o.r, c))) return false;
+    if (this.objects.some((q) => q !== o && dist2(x, y, q.x, q.y) < (q.r + o.r) ** 2)) return false;
+    o.x = x;
+    o.y = y;
+    return true;
+  }
+
+  // Teleport All: a random free spot inside the zone, away from everyone.
+  randomSafeSpot(r) {
+    let spot = null;
+    for (let i = 0; i < 40; i++) {
+      spot = this.randomFreeSpot(r, true);
+      if (this.living().every((p) => dist2(p.x, p.y, spot.x, spot.y) > 250 * 250)) return spot;
+    }
+    return spot;
   }
 }

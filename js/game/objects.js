@@ -9,6 +9,7 @@ export const OBJECT_KINDS = {
     radius: O.turret.radius,
     hp: (round) => O.turret.hp + O.turret.hpPerRound * Math.max(0, round - 1),
     xp: PROGRESSION.xp.turret,
+    directXp: PROGRESSION.xp.turretDirect,
     dropChance: O.turret.dropChance,
     init(o) { o.aim = Math.random() * Math.PI * 2; o.cd = 1 + Math.random(); o.charge = 0; },
 
@@ -57,6 +58,25 @@ export const OBJECT_KINDS = {
     hp: () => O.barrel.hp,
     xp: PROGRESSION.xp.barrel,
     dropChance: 0,
+    init(o) { o.vx = 0; o.vy = 0; o.fuse = 0; },
+
+    // Barrels burn down a fuse after the first hit, slide when grappled,
+    // and ride conveyor belts (sections 8A, 9, 10).
+    update(sim, o, dt) {
+      if (o.fuse > 0) {
+        o.fuse -= dt;
+        if (o.fuse <= 0) { sim.destroyObject(o, o.igniter || null); return; }
+      }
+      const belt = sim.beltAt(o.x, o.y);
+      const vx = o.vx + belt.x, vy = o.vy + belt.y;
+      if (vx || vy) {
+        if (!sim.moveObject(o, o.x + vx * dt, o.y + vy * dt)) { o.vx = 0; o.vy = 0; }
+      }
+      const f = Math.exp(-3 * dt);
+      o.vx *= f; o.vy *= f;
+      if (Math.abs(o.vx) < 5) o.vx = 0;
+      if (Math.abs(o.vy) < 5) o.vy = 0;
+    },
     onDestroy(sim, o, attacker) {
       sim.explode(o.x, o.y, O.barrel.blastRadius, O.barrel.blastDamage, attacker, 'barrel');
     },
@@ -66,6 +86,7 @@ export const OBJECT_KINDS = {
     radius: O.vault.radius,
     hp: () => O.vault.hp,
     xp: PROGRESSION.xp.vault,
+    directXp: PROGRESSION.xp.vaultDirect,
     dropChance: O.vault.dropChance,
   },
 };

@@ -89,6 +89,11 @@ const SOUNDS = {
   emote: () => tone('sine', 700, 900, 0.08, 0.1),
   tshot: () => tone('square', 420, 160, 0.12, 0.08),
   reload: () => { noise(0.05, 0.12, 'highpass', 3000); tone('square', 300, 300, 0.04, 0.06, 0.12); },
+  tick: (k = 0.5) => tone('square', 500 + 900 * k, 500 + 900 * k, 0.03, 0.07),
+  squeak: () => tone('sine', 1500, 2400, 0.08, 0.12),
+  buzz: () => wobble(tone('sawtooth', 220, 230, 0.35, 0.05), 40, 30),
+  siren: () => { for (let i = 0; i < 3; i++) { tone('sawtooth', 600, 900, 0.25, 0.1, i * 0.5); tone('sawtooth', 900, 600, 0.25, 0.1, i * 0.5 + 0.25); } },
+  hiss: () => noise(1.2, 0.15, 'highpass', 4000),
   orb: () => tone('sine', 1200 + Math.random() * 300, 1600, 0.06, 0.08),
   levelup: () => [523, 784, 1046, 1568].forEach((f, i) => tone('triangle', f, f * 1.01, 0.14, 0.18, i * 0.07)),
 };
@@ -107,13 +112,13 @@ export const audio = {
   },
 
   // minGap stops 8 players' machine-guns from becoming white noise.
-  play(name, minGap = 0.03, vol = 1) {
+  play(name, minGap = 0.03, vol = 1, arg = undefined) {
     if (!enabled || !ctx || ctx.state !== 'running' || !SOUNDS[name] || vol <= 0.02) return;
     const now = ctx.currentTime;
     if (now - (lastPlayed.get(name) || 0) < minGap) return;
     lastPlayed.set(name, now);
     volume = vol;
-    SOUNDS[name]();
+    SOUNDS[name](arg);
     volume = 1;
   },
 };

@@ -172,6 +172,7 @@ export class Renderer {
     this.drawProps(view, true);
     this.drawWallsAndCrates(view);
     this.drawObjects(view);
+    this.drawGolden(view);
     for (const p of view.players) if (p.alive && p.seen) this.drawPlayer(p, view);
     this.drawProps(view, false);
     this.drawBushes(view);
@@ -290,6 +291,12 @@ export class Renderer {
     }
     for (const c of view.crates) {
       if (!this.inView(c.x, c.y, 60)) continue;
+      ctx.save();
+      if (c.possessedBy) {                       // a ghost is inside: wobble
+        ctx.translate(c.x + c.w / 2, c.y + c.h / 2);
+        ctx.rotate(Math.sin(this.time * 18) * 0.12);
+        ctx.translate(-(c.x + c.w / 2), -(c.y + c.h / 2));
+      }
       ctx.fillStyle = c.hp >= 3 ? '#a8743f' : c.hp === 2 ? '#8f6234' : '#704b27';
       ctx.fillRect(c.x, c.y, c.w, c.h);
       ctx.strokeStyle = '#5a3a1c';
@@ -299,6 +306,8 @@ export class Renderer {
       ctx.moveTo(c.x + 4, c.y + 4); ctx.lineTo(c.x + c.w - 4, c.y + c.h - 4);
       ctx.moveTo(c.x + c.w - 4, c.y + 4); ctx.lineTo(c.x + 4, c.y + c.h - 4);
       ctx.stroke();
+      if (c.possessedBy) this.ghostEyes(c.x + c.w / 2, c.y + c.h / 2);
+      ctx.restore();
     }
   }
 
@@ -327,15 +336,22 @@ export class Renderer {
         ctx.beginPath(); ctx.arc(o.x, o.y, 8, 0, TAU); ctx.fill();
         if (view.map.dark) this.light(o.x + Math.cos(o.aim) * 120, o.y + Math.sin(o.aim) * 120, 110, 0.05);
       } else if (o.kind === 'barrel') {
+        if (o.charging) {                        // fuse lit: flicker and glow
+          ctx.fillStyle = `rgba(255,${120 + Math.random() * 100},30,${0.35 + Math.random() * 0.3})`;
+          ctx.beginPath(); ctx.arc(o.x, o.y, o.r + 10 + Math.random() * 6, 0, TAU); ctx.fill();
+          if (view.map.dark) this.light(o.x, o.y, 120, 0.05);
+        }
+        const wob = o.possessedBy ? Math.sin(this.time * 18) * 3 : 0;
         ctx.fillStyle = '#c92a2a';
-        ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(o.x + wob, o.y, o.r, 0, TAU); ctx.fill();
         ctx.strokeStyle = '#7a1010';
         ctx.lineWidth = 4;
         ctx.stroke();
         ctx.strokeStyle = '#ffd23f';
         ctx.lineWidth = 3;
         ctx.beginPath(); ctx.arc(o.x, o.y, o.r * 0.55, 0, TAU); ctx.stroke();
-        this.drawEmoji('⚠️', o.x, o.y + 1, 16);
+        if (o.possessedBy) this.ghostEyes(o.x + wob, o.y);
+        else this.drawEmoji(o.charging ? '🔥' : '⚠️', o.x, o.y + 1, 16);
       } else if (o.kind === 'vault') {
         const s = o.r * 1.6;
         ctx.fillStyle = '#b8860b';
@@ -377,6 +393,7 @@ export class Renderer {
     const { ctx } = this;
     for (const o of view.orbs) {
       if (!this.inView(o.x, o.y, 10)) continue;
+      if (o.blink && Math.floor(this.time * 8) % 2) continue;     // decaying: worth half
       const pulse = 1 + Math.sin(this.time * 8 + o.id) * 0.2;
       ctx.fillStyle = 'rgba(120,255,200,0.25)';
       ctx.beginPath(); ctx.arc(o.x, o.y, 12 * pulse, 0, TAU); ctx.fill();
@@ -388,8 +405,13 @@ export class Renderer {
   drawBushes(view) {
     const { ctx } = this;
     const me = view.me;
-    for (const b of view.map.bushes) {
-      if (!this.inView(b.x + b.w / 2, b.y + b.h / 2, Math.max(b.w, b.h))) continue;
+    view.map.bushes.forEach((b, i) => {
+      if (!this.inView(b.x + b.w / 2, b.y + b.h / 2, Math.max(b.w, b.h))) return;
+      if (view.burnt.has(i)) {                   // burnt to ash
+        ctx.fillStyle = 'rgba(30,26,22,0.75)';
+        ctx.fillRect(b.x + 6, b.y + 6, b.w - 12, b.h - 12);
+        return;
+      }
       const mine = me?.alive && me.x >= b.x && me.x <= b.x + b.w && me.y >= b.y && me.y <= b.y + b.h;
       ctx.globalAlpha = mine ? 0.45 : 0.9;
       ctx.fillStyle = '#2f6b2a';
@@ -406,7 +428,7 @@ export class Renderer {
         }
       }
       ctx.globalAlpha = 1;
-    }
+    });
   }
 
   drawProps(view, ground) {
@@ -416,8 +438,15 @@ export class Renderer {
       if (isGround !== ground || !this.inView(o.x, o.y, o.r)) continue;
       switch (o.kind) {
         case 'banana': this.drawEmoji('🍌', o.x, o.y, 30); break;
+        case 'grenade':
+          ctx.fillStyle = '#2b2f3a';
+          ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU); ctx.fill();
+          ctx.fillStyle = Math.floor(this.time * 10) % 2 ? '#ff3b3b' : '#ffd23f';
+          ctx.beginPath(); ctx.arc(o.x, o.y - 4, 3.5, 0, TAU); ctx.fill();
+          break;
         case 'mine':
-          if (o.owner === view.myNum) {
+          // Everyone sees it for 1.5 s, then only its owner (section 8C).
+          if (o.owner === view.myNum || 60 - o.left < 1.5) {
             ctx.fillStyle = Math.floor(this.time * 4) % 2 ? '#ff3b3b' : '#7a1010';
             ctx.beginPath(); ctx.arc(o.x, o.y, 9, 0, TAU); ctx.fill();
             ctx.strokeStyle = 'rgba(255,60,60,0.4)';
@@ -492,9 +521,20 @@ export class Renderer {
       if (!this.inView(b.x, b.y, b.r)) continue;
       const color = view.roster.get(b.owner)?.color || '#fff';
       switch (b.kind) {
+        case 'giftShot':
+          ctx.fillStyle = 'rgba(255,170,40,0.4)';
+          ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 1.6, 0, TAU); ctx.fill();
+          ctx.fillStyle = '#ffb13b';
+          ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
+          this.drawEmoji('🎁', b.x, b.y, b.r * 1.3);
+          break;
         case 'bullet':
         case 'pellet':
-          ctx.fillStyle = color;
+          if (b.last) {                          // the last bullet in a magazine glows
+            ctx.fillStyle = 'rgba(255,230,60,0.45)';
+            ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 1.8, 0, TAU); ctx.fill();
+          }
+          ctx.fillStyle = b.last ? '#ffe23c' : color;
           ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
           ctx.fillStyle = 'rgba(255,255,255,0.85)';
           ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.45, 0, TAU); ctx.fill();
@@ -607,6 +647,17 @@ export class Renderer {
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(p.x, p.y, bodyR + 10, -Math.PI / 2, -Math.PI / 2 + TAU * p.reload); ctx.stroke();
     }
+    if (p.boss && !p.decoy) {                     // match point: golden fire
+      for (let i = 0; i < 3; i++) {
+        ctx.strokeStyle = `rgba(255,${180 + i * 25},40,${0.5 - i * 0.12})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(p.x, p.y, bodyR + 8 + i * 5 + Math.sin(this.time * 9 + i) * 3, 0, TAU); ctx.stroke();
+      }
+    }
+    if (p.speed && Math.random() < 0.3) {         // speed boots: lightning sparks
+      this.particles.push({ type: 'dot', x: p.x + (Math.random() - 0.5) * 30, y: p.y + (Math.random() - 0.5) * 30, vx: 0, vy: 0, life: 0.25, max: 0.25, color: '#9be7ff', size: 3 });
+    }
+    if (isMe && p.magazine) this.ammoPips(p, bodyR);
     if (p.shield > 0) {
       ctx.strokeStyle = 'rgba(90,170,255,0.95)';
       ctx.lineWidth = 3;
@@ -667,6 +718,7 @@ export class Renderer {
       ctx.setLineDash([]);
     }
     this.nameTag(p, info, bodyR, teams, '#fff');
+    if (info.title && !p.decoy) this.label(`“${info.title}”`, p.x, p.y + bodyR + 31, '#ffd23f', 11);
     ctx.restore();
   }
 
@@ -694,10 +746,51 @@ export class Renderer {
     ctx.fillRect(x - w / 2 + 1, y - 2, (w - 2) * k, 5);
   }
 
+  // Ammo pips under your own character (section 6).
+  ammoPips(p, bodyR) {
+    const { ctx } = this;
+    const n = p.magazine;
+    const spread = Math.min(Math.PI * 0.9, n * 0.13);
+    for (let i = 0; i < n; i++) {
+      const a = Math.PI / 2 + (n === 1 ? 0 : (i / (n - 1) - 0.5) * spread);
+      ctx.fillStyle = i < p.ammo ? (i === 0 && p.ammo === 1 ? '#ffe23c' : '#ffffff') : 'rgba(255,255,255,0.2)';
+      ctx.beginPath(); ctx.arc(p.x + Math.cos(a) * (bodyR + 7), p.y + Math.sin(a) * (bodyR + 7), 2.6, 0, TAU); ctx.fill();
+    }
+  }
+
+  ghostEyes(x, y) {
+    const { ctx } = this;
+    ctx.fillStyle = 'rgba(232,236,255,0.9)';
+    ctx.beginPath(); ctx.arc(x - 7, y - 2, 5, 0, TAU); ctx.arc(x + 7, y - 2, 5, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(x - 7, y - 1, 2.2, 0, TAU); ctx.arc(x + 7, y - 1, 2.2, 0, TAU); ctx.fill();
+  }
+
+  // Golden supply drop (section 12).
+  drawGolden(view) {
+    const g = view.golden;
+    if (!g || !this.inView(g.x, g.y, 60)) return;
+    const { ctx } = this;
+    const pulse = 1 + Math.sin(this.time * 6) * 0.08;
+    ctx.fillStyle = 'rgba(255,215,60,0.3)';
+    ctx.beginPath(); ctx.arc(g.x, g.y, 46 * pulse, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ffcc1f';
+    ctx.fillRect(g.x - 22, g.y - 22, 44, 44);
+    ctx.strokeStyle = '#fff3b0';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(g.x - 20, g.y - 20, 40, 40);
+    this.drawEmoji('⭐', g.x, g.y, 26);
+    if (g.progress > 0 && g.progress < 1) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(g.x, g.y, 36, -Math.PI / 2, -Math.PI / 2 + TAU * g.progress); ctx.stroke();
+    }
+  }
+
   drawGhost(p, view) {
     const { ctx } = this;
     const info = view.roster.get(p.num);
-    if (!info || !this.inView(p.x, p.y, 40)) return;
+    if (!info || p.possessing || !this.inView(p.x, p.y, 40)) return;
     const isMe = p.num === view.myNum;
     const bob = Math.sin(this.time * 3 + p.num) * 4;
     ctx.save();
@@ -820,7 +913,7 @@ export class Renderer {
 
   // ------------------------------------------------------------ minimap (section 4)
 
-  buildMinimapStatic(map) {
+  buildMinimapStatic(map, burnt = new Set()) {
     const c = document.createElement('canvas');
     c.width = this.minimap.width;
     c.height = this.minimap.height;
@@ -832,12 +925,12 @@ export class Renderer {
     g.fillStyle = '#ff6a2a';
     for (const l of map.lava) g.fillRect(l.x, l.y, l.w, l.h);
     g.fillStyle = '#26402a';
-    for (const b of map.bushes) g.fillRect(b.x, b.y, b.w, b.h);
+    map.bushes.forEach((b, i) => { if (!burnt.has(i)) g.fillRect(b.x, b.y, b.w, b.h); });
     g.fillStyle = '#45464d';
     for (const cv of map.conveyors) g.fillRect(cv.x, cv.y, cv.w, cv.h);
     g.fillStyle = '#b9c0d0';
     for (const w of map.walls) g.fillRect(w.x, w.y, Math.max(w.w, 14), Math.max(w.h, 14));
-    this.mmStatic = { canvas: c, mapId: map.id };
+    this.mmStatic = { canvas: c, mapId: map.id, burnt: burnt.size };
   }
 
   drawMinimap(view) {
@@ -846,7 +939,8 @@ export class Renderer {
     const map = view.map;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, mm.width, mm.height);
-    if (!this.mmStatic || this.mmStatic.mapId !== map.id || this.mmStatic.canvas.width !== mm.width) this.buildMinimapStatic(map);
+    if (!this.mmStatic || this.mmStatic.mapId !== map.id || this.mmStatic.canvas.width !== mm.width
+      || this.mmStatic.burnt !== view.burnt.size) this.buildMinimapStatic(map, view.burnt);
     g.globalAlpha = 0.85;
     g.drawImage(this.mmStatic.canvas, 0, 0);
     g.globalAlpha = 1;
@@ -880,6 +974,7 @@ export class Renderer {
       if (o.kind === 'turret') dot(o.x, o.y, 2.2 * px, '#ff5a5f');
       else if (o.kind === 'vault') { g.fillStyle = '#ffd23f'; g.fillRect(o.x - 3 * px / sx, o.y - 3 * px / sy, 6 * px / sx, 6 * px / sy); }
     }
+    if (view.golden) dot(view.golden.x, view.golden.y, (3.5 + Math.sin(this.time * 6)) * px, '#ffcc1f', '#fff');
     for (const b of view.blips) dot(b.x, b.y, 2.5 * px, `rgba(255,90,95,${1 - b.age})`);
     for (const p of view.players) {
       if (!p.alive || !p.hasPos || p.num === view.myNum) continue;
